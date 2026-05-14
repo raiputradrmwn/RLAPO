@@ -35,6 +35,9 @@ Jangan pakai `streamlit run streamlit_app.py` jika command itu mengarah ke Pytho
 - Jalankan generation dan evaluasi langsung dari Streamlit.
 - Lihat `Pass@1`, average reward, compile rate, distribusi strategi, tabel hasil, dan ekspor CSV/JSONL.
 - Status run lebih jelas: model loading, start time, progress generation, live Pass@1, compile rate, reward, dan log task terakhir.
+- Setiap run disimpan di session, jadi hasil `Online Bandit`, `zero_shot`, `few_shot`, `cot`, dan `hint` bisa dibandingkan tanpa saling menimpa.
+- Tab `Compare Runs` menyediakan leaderboard, grafik perbandingan Pass@1/compile rate/reward, dan perbandingan pass/fail per task.
+- Hasil 164 task dibuat lebih nyaman dibaca lewat task explorer, filter outcome/strategy, dan raw table dalam expander.
 
 ## Catatan
 
