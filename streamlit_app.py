@@ -2,21 +2,26 @@ import ast
 import gzip
 import json
 import random
+import subprocess
 import sys
 import threading
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parent
 HUMANEVAL_FILE = ROOT / "HumanEval.jsonl.gz"
+CHECKPOINT_FILE = ROOT / "streamlit_latest_partial_results.jsonl"
+RUN_HISTORY_FILE = ROOT / "streamlit_run_history.json"
 APP_TITLE = "RL Prompt Engineering Lab"
-PROMPT_EDITOR_VERSION = "optimized_prompts_v3"
+PROMPT_EDITOR_VERSION = "notebook_68_prompts_v4"
 STRATEGY_NAMES = {
     0: "zero_shot",
     1: "few_shot",
@@ -26,8 +31,63 @@ STRATEGY_NAMES = {
 
 
 def init_state():
-    st.session_state.setdefault("run_history", [])
+    st.session_state.setdefault("run_history", load_run_history())
     st.session_state.setdefault("last_results", None)
+    if st.session_state["last_results"] is None and CHECKPOINT_FILE.exists():
+        try:
+            checkpoint = pd.read_json(CHECKPOINT_FILE, lines=True)
+            if not checkpoint.empty:
+                st.session_state["last_results"] = checkpoint
+        except ValueError:
+            pass
+
+
+def save_partial_results(rows: list[dict]):
+    if rows:
+        pd.DataFrame(rows).to_json(CHECKPOINT_FILE, orient="records", lines=True, force_ascii=False)
+
+
+def load_run_history() -> list[dict]:
+    if not RUN_HISTORY_FILE.exists():
+        return []
+    try:
+        payload = json.loads(RUN_HISTORY_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    runs = []
+    for item in payload:
+        df = pd.DataFrame(item.get("records", []))
+        runs.append({
+            "name": item.get("name", "Unnamed run"),
+            "created_at": item.get("created_at", ""),
+            "config": item.get("config", {}),
+            "summary": item.get("summary", {}),
+            "df": df,
+        })
+    return runs
+
+
+def save_run_history(history: list[dict]):
+    payload = []
+    for item in history:
+        df = item.get("df", pd.DataFrame())
+        payload.append({
+            "name": item.get("name", "Unnamed run"),
+            "created_at": item.get("created_at", ""),
+            "config": item.get("config", {}),
+            "summary": item.get("summary", {}),
+            "records": df.to_dict("records") if isinstance(df, pd.DataFrame) else [],
+        })
+    RUN_HISTORY_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def ci95_percent(successes: int, total: int) -> tuple[float, float, float]:
+    if total <= 0:
+        return 0.0, 0.0, 0.0
+    p = successes / total
+    margin = 1.96 * np.sqrt(p * (1 - p) / total) * 100
+    center = p * 100
+    return center, max(0.0, center - margin), min(100.0, center + margin)
 
 
 def make_run_name(config: dict, started_at: str) -> str:
@@ -42,6 +102,11 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
     pass_at_1 = float(df["passed"].mean() * 100) if not df.empty else 0.0
     compile_rate = float(df["compile_ok"].mean() * 100) if not df.empty else 0.0
     avg_reward = float(df["reward"].mean()) if not df.empty else 0.0
+    total = int(len(df))
+    passed = int(df["passed"].sum()) if not df.empty else 0
+    compiled = int(df["compile_ok"].sum()) if not df.empty else 0
+    _, pass_ci_low, pass_ci_high = ci95_percent(passed, total)
+    _, compile_ci_low, compile_ci_high = ci95_percent(compiled, total)
     return {
         "run_name": run_name,
         "mode": config["mode"],
@@ -49,27 +114,33 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "model": config["model_name"],
         "tasks": config["num_tasks"],
         "repeats": config["repeats"],
-        "generations": int(len(df)),
+        "generations": total,
         "pass_at_1": pass_at_1,
+        "pass_at_1_ci_low": pass_ci_low,
+        "pass_at_1_ci_high": pass_ci_high,
         "compile_rate": compile_rate,
+        "compile_ci_low": compile_ci_low,
+        "compile_ci_high": compile_ci_high,
         "avg_reward": avg_reward,
-        "passed": int(df["passed"].sum()) if not df.empty else 0,
+        "passed": passed,
+        "failed": total - passed,
+        "compiled": compiled,
+        "compile_failed": total - compiled,
+        "total_seconds": float(df["task_seconds"].sum()) if "task_seconds" in df and not df.empty else 0.0,
+        "avg_task_seconds": float(df["task_seconds"].mean()) if "task_seconds" in df and not df.empty else 0.0,
         "alpha": config["alpha"],
         "force_explore": config["force_explore"],
         "seed": config["seed"],
         "chat_template": config["use_chat_template"],
+        "notebook_compatible": config.get("notebook_compatible", False),
     }
 DEFAULT_PROMPTS = {
     "zero_shot": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
-
-Focus on correctness. Read the docstring carefully, handle edge cases, and prefer simple Python standard-library code.
 
 Complete this function:
 
 {prompt}""",
     "few_shot": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
-
-Follow the examples exactly: output only the missing indented function body.
 
 Here are examples of completed functions:
 
@@ -97,28 +168,18 @@ def find_max(lst):
 Solution:
     return max(lst)
 
-Example 4:
-Problem:
-def is_sorted(nums):
-    \"\"\"Returns True if nums is sorted in nondecreasing order\"\"\"
-
-Solution:
-    return all(nums[i] <= nums[i + 1] for i in range(len(nums) - 1))
-
 Now complete this function:
 
 {prompt}""",
-    "cot": """Think step by step internally about how to solve this problem, including edge cases, then write the code. Your final answer must be ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
+    "cot": """Think step by step about how to solve this problem, then write the code. First, reason about the approach, then provide the code.
 
 Problem:
 {prompt}
 
-Code:""",
+Reasoning: Let me think about this step by step. """,
     "hint": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
 
 {hint}
-
-Before writing code, consider boundary cases such as empty inputs, duplicates, negative numbers, ordering, and type-specific behavior when relevant. Output only the final function body.
 
 Complete this function:
 
@@ -177,6 +238,15 @@ def extract_code(generated: str) -> str:
     return _normalize_body_indentation(generated)
 
 
+def extract_code_notebook(generated: str) -> str:
+    generated = generated.strip()
+    if "```python" in generated:
+        return generated.split("```python", 1)[1].split("```", 1)[0].strip()
+    if "```" in generated:
+        return generated.split("```", 1)[1].split("```", 1)[0].strip()
+    return generated
+
+
 def make_hint(problem: dict) -> str:
     prompt_text = problem["prompt"].lower()
     if any(word in prompt_text for word in ["sort", "sorted", "order"]):
@@ -197,23 +267,22 @@ def check_compile(code: str) -> int:
 
 
 def run_with_timeout(code: str, timeout_seconds: int = 10):
-    result = {"success": False, "error": None}
-
-    def target():
-        try:
-            exec_globals = {}
-            exec(code, exec_globals)
-            result["success"] = True
-        except Exception as exc:
-            result["error"] = repr(exc)
-
-    thread = threading.Thread(target=target)
-    thread.daemon = True
-    thread.start()
-    thread.join(timeout_seconds)
-    if thread.is_alive():
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import sys; exec(sys.stdin.read())"],
+            input=code,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
         return False, "TIMEOUT"
-    return result["success"], result.get("error")
+    if result.returncode == 0:
+        return True, None
+    error = (result.stderr or result.stdout or "RUNTIME_ERROR").strip()
+    return False, error[-1000:]
 
 
 def evaluate_sample(problem: dict, completion: str, timeout: int):
@@ -267,13 +336,12 @@ def extract_features(problem: dict, tokenizer=None) -> list[float]:
 
 
 class OnlineLinUCB:
-    def __init__(self, num_arms=4, dim_context=19, alpha=0.15, force_explore=12):
+    def __init__(self, num_arms=4, dim_context=19, alpha=0.3, force_explore=40):
         self.num_arms = num_arms
         self.dim_context = dim_context
         self.alpha = alpha
         self.force_explore = force_explore
         self.t = 0
-        self.arm_priors = [0.0, 0.02, 0.08, 0.10]
         self.A = [np.eye(dim_context) + 0.01 * np.eye(dim_context) for _ in range(num_arms)]
         self.b = [np.zeros((dim_context, 1)) for _ in range(num_arms)]
         self.theta = [np.zeros((dim_context, 1)) for _ in range(num_arms)]
@@ -289,11 +357,14 @@ class OnlineLinUCB:
         context = context.reshape(-1, 1)
         scores = []
         for arm in range(self.num_arms):
-            A_inv = np.linalg.pinv(self.A[arm])
+            try:
+                A_inv = np.linalg.inv(self.A[arm])
+            except np.linalg.LinAlgError:
+                A_inv = np.linalg.pinv(self.A[arm])
             mean = float((self.theta[arm].T @ context)[0, 0])
             uncertainty = float((self.alpha * np.sqrt(context.T @ A_inv @ context))[0, 0])
             history = float(np.mean(self.arm_rewards[arm])) if self.arm_rewards[arm] else 0.0
-            scores.append(mean + uncertainty + history * 0.5 + self.arm_priors[arm])
+            scores.append(mean + uncertainty + history * 0.5)
         arm = int(np.argmax(scores))
         self.arm_counts[arm] += 1
         return arm
@@ -303,7 +374,10 @@ class OnlineLinUCB:
         self.A[arm] += context @ context.T
         self.b[arm] += reward * context
         self.arm_rewards[arm].append(reward)
-        self.theta[arm] = np.linalg.pinv(self.A[arm]) @ self.b[arm]
+        try:
+            self.theta[arm] = np.linalg.inv(self.A[arm]) @ self.b[arm]
+        except np.linalg.LinAlgError:
+            self.theta[arm] = np.linalg.pinv(self.A[arm]) @ self.b[arm]
 
 
 @st.cache_resource(show_spinner=False)
@@ -323,7 +397,7 @@ def load_model(model_name: str, load_in_4bit: bool):
     return tokenizer, model
 
 
-def generate_completion(tokenizer, model, prompt: str, max_new_tokens: int, temperature: float, do_sample: bool):
+def generate_completion(tokenizer, model, prompt: str, max_new_tokens: int, temperature: float, do_sample: bool, generation_timeout: int | None = None):
     import torch
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048).to(model.device)
@@ -332,6 +406,8 @@ def generate_completion(tokenizer, model, prompt: str, max_new_tokens: int, temp
         "do_sample": do_sample,
         "pad_token_id": tokenizer.eos_token_id,
     }
+    if generation_timeout:
+        generation_kwargs["max_time"] = generation_timeout
     if do_sample:
         generation_kwargs["temperature"] = temperature
     with torch.no_grad():
@@ -355,7 +431,56 @@ def build_prompt(template: str, problem: dict, tokenizer=None, use_chat_template
     return prompt_content
 
 
+def build_notebook_prompt(arm: int, problem: dict, tokenizer) -> str:
+    base_instruction = "You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.\n\n"
+    if arm == 0:
+        prompt_content = base_instruction + f"Complete this function:\n\n{problem['prompt']}"
+    elif arm == 1:
+        examples = '''
+        Example 1:
+        Problem: 
+        def add(a, b):
+            """Returns the sum of a and b"""
+            
+        Solution:
+            return a + b
+
+        Example 2:
+        Problem:
+        def reverse_string(s):
+            """Reverses the input string"""
+            
+        Solution:
+            return s[::-1]
+
+        Example 3:
+        Problem:
+        def find_max(lst):
+            """Finds the maximum value in a list"""
+            
+        Solution:
+            return max(lst)
+        '''
+        prompt_content = base_instruction + f"Here are examples of completed functions:\n{examples}\n\nNow complete this function:\n\n{problem['prompt']}"
+    elif arm == 2:
+        prompt_content = f"Think step by step about how to solve this problem, then write the code. First, reason about the approach, then provide the code.\n\nProblem:\n{problem['prompt']}\n\nReasoning: Let me think about this step by step. "
+    else:
+        prompt_text = problem["prompt"].lower()
+        if any(word in prompt_text for word in ["sort", "sorted", "order"]):
+            hint = "Hint: Consider efficient sorting algorithms and time complexity."
+        elif any(word in prompt_text for word in ["tree", "node", "binary"]):
+            hint = "Hint: Consider recursion or iterative traversal for tree structures."
+        elif any(word in prompt_text for word in ["string", "text", "character"]):
+            hint = "Hint: Consider string manipulation methods and edge cases like empty strings."
+        else:
+            hint = "Hint: Consider edge cases and efficient data structures."
+        prompt_content = base_instruction + f"{hint}\n\nComplete this function:\n\n{problem['prompt']}"
+    messages = [{"role": "user", "content": prompt_content}]
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
 def run_experiment(config: dict, prompt_templates: dict, problems: dict):
+    run_timer_start = time.perf_counter()
     run_started_at = datetime.now()
     st.session_state["run_started_at"] = run_started_at.strftime("%Y-%m-%d %H:%M:%S")
     st.session_state["run_config"] = config.copy()
@@ -384,6 +509,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     top_line.info(f"Run started at {st.session_state['run_started_at']} | total generations: {total_steps}")
     for repeat in range(config["repeats"]):
         for task_id, problem in items:
+            task_timer_start = time.perf_counter()
             step += 1
             if bandit:
                 features = np.array(extract_features(problem, tokenizer))
@@ -394,12 +520,37 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 arm = {name: idx for idx, name in STRATEGY_NAMES.items()}[strategy]
                 features = np.array(extract_features(problem, tokenizer))
 
-            prompt = build_prompt(
-                prompt_templates[strategy],
-                problem,
-                tokenizer=tokenizer,
-                use_chat_template=config["use_chat_template"],
+            if config["notebook_compatible"] and config["mode"] == "Online Bandit":
+                prompt = build_notebook_prompt(arm, problem, tokenizer)
+            else:
+                prompt = build_prompt(
+                    prompt_templates[strategy],
+                    problem,
+                    tokenizer=tokenizer,
+                    use_chat_template=config["use_chat_template"],
+                )
+            elapsed_before = time.perf_counter() - run_timer_start
+            progress.progress(
+                (step - 1) / total_steps,
+                text=f"Generating {step}/{total_steps}: {task_id} with {strategy} | elapsed {elapsed_before/60:.1f}m",
             )
+            with live_panel.container(border=True):
+                st.markdown("**Live Run Summary**")
+                completed = len(rows)
+                prev_pass = sum(r["passed"] for r in rows)
+                prev_compile = sum(r["compile_ok"] for r in rows)
+                prev_reward = sum(r["reward"] for r in rows) / completed if completed else 0.0
+                prev_pass_rate = prev_pass / completed * 100 if completed else 0.0
+                prev_compile_rate = prev_compile / completed * 100 if completed else 0.0
+                live_cols = st.columns(6)
+                live_cols[0].metric("Progress", f"{completed}/{total_steps}")
+                live_cols[1].metric("Pass@1", f"{prev_pass_rate:.1f}%")
+                live_cols[2].metric("Pass", prev_pass)
+                live_cols[3].metric("Fail", completed - prev_pass)
+                live_cols[4].metric("Compile OK", f"{prev_compile_rate:.1f}%")
+                live_cols[5].metric("Avg Reward", f"{prev_reward:.3f}")
+                st.caption(f"Current phase: Generating task {step}/{total_steps}: {task_id} | strategy={strategy}")
+            generation_timer_start = time.perf_counter()
             generated = generate_completion(
                 tokenizer,
                 model,
@@ -407,9 +558,18 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 config["max_new_tokens"],
                 config["temperature"],
                 config["do_sample"],
+                None if config["notebook_compatible"] and config["mode"] == "Online Bandit" else config["generation_timeout"],
             )
-            completion = extract_code(generated)
+            generation_seconds = time.perf_counter() - generation_timer_start
+            progress.progress(
+                (step - 0.5) / total_steps,
+                text=f"Evaluating {step}/{total_steps}: {task_id} | generation {generation_seconds:.1f}s",
+            )
+            eval_timer_start = time.perf_counter()
+            completion = extract_code_notebook(generated) if config["notebook_compatible"] and config["mode"] == "Online Bandit" else extract_code(generated)
             passed, compile_ok, reward, error = evaluate_sample(problem, completion, config["timeout"])
+            eval_seconds = time.perf_counter() - eval_timer_start
+            task_seconds = time.perf_counter() - task_timer_start
             if bandit:
                 bandit.update(arm, features, reward)
 
@@ -425,18 +585,25 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 "completion": completion,
                 "raw_generated": generated,
                 "prompt": prompt,
+                "task_seconds": task_seconds,
+                "generation_seconds": generation_seconds,
+                "eval_seconds": eval_seconds,
                 "generated_chars": len(generated),
                 "completion_chars": len(completion),
             })
+            save_partial_results(rows)
+            st.session_state["last_results"] = pd.DataFrame(rows)
             current_pass = sum(r["passed"] for r in rows)
             current_compile = sum(r["compile_ok"] for r in rows)
             current_reward = sum(r["reward"] for r in rows) / len(rows)
             current_pass_at_1 = current_pass / len(rows) * 100
             current_compile_rate = current_compile / len(rows) * 100
             current_fail = len(rows) - current_pass
+            elapsed = time.perf_counter() - run_timer_start
+            eta = (total_steps - step) * (elapsed / len(rows)) if rows else 0.0
             progress.progress(
                 step / total_steps,
-                text=f"Running {step}/{total_steps}: {task_id} with {strategy}",
+                text=f"Running {step}/{total_steps}: {task_id} with {strategy} | elapsed {elapsed/60:.1f}m | ETA {eta/60:.1f}m",
             )
             outcome = "PASS" if passed else "FAIL"
             with live_panel.container(border=True):
@@ -448,8 +615,8 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 live_cols[3].metric("Fail", current_fail)
                 live_cols[4].metric("Compile OK", f"{current_compile_rate:.1f}%")
                 live_cols[5].metric("Avg Reward", f"{current_reward:.3f}")
-                st.caption(f"Last task: {task_id} | strategy: {strategy} | outcome: {outcome} | reward={reward:.1f}")
-            log_lines.append(f"[{step:03d}/{total_steps:03d}] {task_id} | {strategy} | {outcome} | reward={reward:.1f}")
+                st.caption(f"Last task: {task_id} | strategy: {strategy} | outcome: {outcome} | reward={reward:.1f} | task={task_seconds:.1f}s | eval={eval_seconds:.1f}s | ETA={eta/60:.1f}m")
+            log_lines.append(f"[{step:03d}/{total_steps:03d}] {task_id} | {strategy} | {outcome} | reward={reward:.1f} | task={task_seconds:.1f}s")
             with recent_log_box.container(border=True):
                 st.caption("Recent task log")
                 st.code("\n".join(log_lines[-10:]), language="text")
@@ -602,14 +769,20 @@ with st.sidebar:
     max_new_tokens = st.slider("Max new tokens", 64, 1024, 512, 64)
     do_sample = st.checkbox("Sampling", value=False)
     temperature = st.slider("Temperature", 0.0, 1.5, 0.1, 0.05)
+    notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=True, help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb.")
+    generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
     timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
     shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
     seed = st.number_input("Seed", value=42, step=1)
-    alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.15, 0.05, disabled=mode != "Online Bandit", help="Rekomendasi dashboard: 0.10-0.20. Lebih kecil berarti lebih cepat exploit arm terbaik.")
-    force_explore = st.slider("Force explore steps", 0, 80, 12, disabled=mode != "Online Bandit", help="Rekomendasi dashboard: 8-16. Force explore 40 terlalu lama jika beberapa arm lemah.")
+    alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.3, 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
+    force_explore = st.slider("Force explore steps", 0, 80, 40, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40.")
     if st.button("Clear saved runs", use_container_width=True):
         st.session_state["run_history"] = []
         st.session_state["last_results"] = None
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
+        if RUN_HISTORY_FILE.exists():
+            RUN_HISTORY_FILE.unlink()
         st.rerun()
 
 tab_prompts, tab_run, tab_results, tab_compare = st.tabs(["Prompt Lab", "Run", "Latest Results", "Compare Runs"])
@@ -617,7 +790,7 @@ tab_prompts, tab_run, tab_results, tab_compare = st.tabs(["Prompt Lab", "Run", "
 with tab_prompts:
     st.subheader("Prompt Templates")
     st.write("Gunakan `{prompt}`, `{task_id}`, `{entry_point}`, dan `{hint}` sebagai placeholder.")
-    if st.button("Reset prompt editor to optimized defaults", use_container_width=True):
+    if st.button("Reset prompt editor to notebook 68 defaults", use_container_width=True):
         for prompt_name in DEFAULT_PROMPTS:
             st.session_state.pop(f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_name}", None)
         st.rerun()
@@ -640,13 +813,13 @@ with tab_run:
     st.markdown(
         """
         <div class="soft-card">
-        Klik tombol di bawah untuk mulai. Hasil run akan otomatis disimpan di session sehingga kamu bisa menjalankan Bandit, lalu Zero-shot, Few-shot, CoT, dan Hint, kemudian membandingkannya di tab <b>Compare Runs</b>. Default sekarang memakai optimized prompts v3 dan bandit yang lebih cepat exploit arm kuat.
+        Klik tombol di bawah untuk mulai. Hasil run akan otomatis disimpan di session sehingga kamu bisa menjalankan Bandit, lalu Zero-shot, Few-shot, CoT, dan Hint, kemudian membandingkannya di tab <b>Compare Runs</b>. Logic prompt dan bandit dikembalikan ke konfigurasi notebook 68%, sementara evaluator timeout dibuat lebih aman agar tidak stuck.
         </div>
         """,
         unsafe_allow_html=True,
     )
     if mode == "Online Bandit":
-        st.caption("Rekomendasi saat ini untuk mengejar skor lebih tinggi: 164 soal, repeat 1, shuffle nonaktif dulu, chat template aktif, alpha 0.15, force explore 12, max_new_tokens 512, sampling off. Jika hasil terlalu bias ke satu arm, coba alpha 0.20 atau force explore 16.")
+        st.caption("Untuk mendekati notebook 68%: aktifkan Notebook 68 compatible mode, 164 soal, repeat 1, shuffle nonaktif, alpha 0.3, force explore 40, max_new_tokens 512, sampling off.")
     config = {
         "mode": mode,
         "strategy": strategy,
@@ -658,6 +831,8 @@ with tab_run:
         "max_new_tokens": max_new_tokens,
         "do_sample": do_sample,
         "temperature": temperature,
+        "notebook_compatible": notebook_compatible,
+        "generation_timeout": generation_timeout,
         "timeout": timeout,
         "shuffle": shuffle,
         "seed": int(seed),
@@ -682,6 +857,7 @@ with tab_run:
         }
         st.session_state["last_results"] = df_result
         st.session_state["run_history"].append(run_record)
+        save_run_history(st.session_state["run_history"])
         st.success("Experiment completed and saved. Open Latest Results or Compare Runs to inspect metrics and outputs.")
 
 with tab_results:
@@ -700,18 +876,24 @@ with tab_results:
     if df is None or df.empty:
         st.info("Belum ada hasil. Jalankan eksperimen dari tab Run.")
     else:
+        for col in ["task_seconds", "generation_seconds", "eval_seconds"]:
+            if col not in df.columns:
+                df[col] = 0.0
         pass_at_1 = df["passed"].mean() * 100
         avg_reward = df["reward"].mean()
         compile_rate = df["compile_ok"].mean() * 100
         fail_rate = 100 - pass_at_1
         total = len(df)
         passed_count = int(df["passed"].sum())
-        col1, col2, col3, col4, col5 = st.columns(5)
+        total_runtime = float(df["task_seconds"].sum())
+        avg_task_seconds = float(df["task_seconds"].mean()) if len(df) else 0.0
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         col1.metric("Pass@1", f"{pass_at_1:.1f}%")
         col2.metric("Avg Reward", f"{avg_reward:.3f}")
         col3.metric("Compile OK", f"{compile_rate:.1f}%")
         col4.metric("Passed", f"{passed_count}/{total}")
         col5.metric("Fail Rate", f"{fail_rate:.1f}%")
+        col6.metric("Runtime", f"{total_runtime/60:.1f}m", f"{avg_task_seconds:.1f}s/task")
 
         st.divider()
         left, right = st.columns(2)
@@ -730,6 +912,8 @@ with tab_results:
             pass_at_1=("passed", lambda x: x.mean() * 100),
             compile_rate=("compile_ok", lambda x: x.mean() * 100),
             avg_reward=("reward", "mean"),
+            avg_task_seconds=("task_seconds", "mean"),
+            avg_eval_seconds=("eval_seconds", "mean"),
             avg_completion_chars=("completion_chars", "mean"),
         ).reset_index()
         st.dataframe(summary, use_container_width=True)
@@ -752,7 +936,7 @@ with tab_results:
         if search_task:
             visible = visible[visible["task_id"].str.contains(search_task, case=False, regex=False)]
 
-        compact_cols = ["repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "generated_chars", "completion_chars", "error"]
+        compact_cols = ["repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error"]
         st.dataframe(visible[compact_cols], use_container_width=True, height=360)
         with st.expander("Show full raw results including prompts and completions", expanded=False):
             st.dataframe(visible, use_container_width=True, height=520)
@@ -769,34 +953,96 @@ with tab_compare:
         st.info("Belum ada saved run. Jalankan Bandit atau fixed strategy dari tab Run, lalu kembali ke sini.")
     else:
         summary_df = pd.DataFrame([item["summary"] for item in history])
+        defaults = {
+            "total_seconds": 0.0,
+            "avg_task_seconds": 0.0,
+            "pass_at_1_ci_low": 0.0,
+            "pass_at_1_ci_high": 0.0,
+            "compile_ci_low": 0.0,
+            "compile_ci_high": 0.0,
+            "failed": 0,
+            "compiled": 0,
+            "compile_failed": 0,
+            "notebook_compatible": False,
+        }
+        for col, default in defaults.items():
+            if col not in summary_df.columns:
+                summary_df[col] = default
         summary_df = summary_df.sort_values("pass_at_1", ascending=False).reset_index(drop=True)
         best = summary_df.iloc[0]
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Best run", best["strategy"])
         c2.metric("Best Pass@1", f"{best['pass_at_1']:.1f}%")
         c3.metric("Best Avg Reward", f"{best['avg_reward']:.3f}")
-        c4.metric("Saved runs", len(history))
+        c4.metric("Best Runtime", f"{best['total_seconds']/60:.1f}m")
+        c5.metric("Saved runs", len(history))
+
+        with st.expander("Manage leaderboard runs", expanded=False):
+            runs_to_delete = st.multiselect(
+                "Delete runs from leaderboard",
+                [item["name"] for item in history],
+                help="Gunakan ini untuk menghapus run yang salah setting, crash, atau hanya testing kecil.",
+            )
+            if st.button("Delete selected runs", type="secondary", use_container_width=True, disabled=not runs_to_delete):
+                st.session_state["run_history"] = [item for item in history if item["name"] not in runs_to_delete]
+                save_run_history(st.session_state["run_history"])
+                st.rerun()
 
         st.subheader("Leaderboard")
+        summary_df["pass@1 95% CI"] = summary_df.apply(
+            lambda row: f"{row['pass_at_1']:.1f}% [{row['pass_at_1_ci_low']:.1f}, {row['pass_at_1_ci_high']:.1f}]",
+            axis=1,
+        )
+        summary_df["compile 95% CI"] = summary_df.apply(
+            lambda row: f"{row['compile_rate']:.1f}% [{row['compile_ci_low']:.1f}, {row['compile_ci_high']:.1f}]",
+            axis=1,
+        )
+        summary_df["runtime_min"] = summary_df["total_seconds"] / 60.0
         display_cols = [
             "run_name",
             "mode",
             "strategy",
             "generations",
             "passed",
-            "pass_at_1",
-            "compile_rate",
+            "failed",
+            "pass@1 95% CI",
+            "compiled",
+            "compile_failed",
+            "compile 95% CI",
             "avg_reward",
+            "runtime_min",
+            "avg_task_seconds",
+            "alpha",
+            "force_explore",
             "seed",
             "chat_template",
+            "notebook_compatible",
         ]
         st.dataframe(summary_df[display_cols], use_container_width=True, height=300)
+        st.caption("CI menggunakan normal approximation 95%. Untuk laporan thesis/jurnal, gunakan run 164 task penuh dan setting yang konsisten.")
 
-        chart_df = summary_df.set_index("run_name")[["pass_at_1", "compile_rate", "avg_reward"]]
         st.subheader("Metric Comparison")
-        st.bar_chart(chart_df[["pass_at_1", "compile_rate"]])
-        st.caption("Avg reward has a different scale, so it is shown separately.")
-        st.bar_chart(chart_df[["avg_reward"]])
+        plot_df = summary_df.copy()
+        plot_df["method"] = plot_df["strategy"].replace({"bandit": "Online Bandit"})
+        duplicated_methods = plot_df["method"].duplicated(keep=False)
+        plot_df.loc[duplicated_methods, "method"] = (
+            plot_df.loc[duplicated_methods, "method"] + " #" + (plot_df.groupby("method").cumcount() + 1).astype(str)
+        )
+        accuracy_chart = plot_df.set_index("method")[["pass_at_1", "compile_rate"]].rename(columns={
+            "pass_at_1": "Pass@1 (%)",
+            "compile_rate": "Compile OK (%)",
+        })
+        accuracy_chart["Avg Reward (x100)"] = plot_df.set_index("method")["avg_reward"] * 100
+        chart_long = accuracy_chart.reset_index().melt("method", var_name="metric", value_name="value")
+        metric_chart = alt.Chart(chart_long).mark_bar().encode(
+            x=alt.X("method:N", title="Method / Prompt", sort=None, axis=alt.Axis(labelAngle=-35)),
+            xOffset=alt.XOffset("metric:N"),
+            y=alt.Y("value:Q", title="Score", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("metric:N", title="Metric"),
+            tooltip=["method:N", "metric:N", alt.Tooltip("value:Q", format=".2f")],
+        ).properties(height=420)
+        st.caption("Vertical grouped bar chart. Higher is better. Runtime tetap tersedia di leaderboard table.")
+        st.altair_chart(metric_chart, use_container_width=True)
 
         st.subheader("Strategy Comparison")
         selected_runs = st.multiselect(
@@ -816,5 +1062,34 @@ with tab_compare:
             pivot = compare_df.pivot_table(index="task_id", columns="run_name", values="passed", aggfunc="max")
             st.dataframe(pivot, use_container_width=True, height=420)
 
+            if len(selected_runs) >= 2:
+                st.subheader("Pairwise Task-Level Comparison")
+                pair_rows = []
+                selected_items = [item for item in history if item["name"] in selected_runs]
+                for i in range(len(selected_items)):
+                    for j in range(i + 1, len(selected_items)):
+                        a = selected_items[i]
+                        b = selected_items[j]
+                        a_df = a["df"][["task_id", "passed"]].drop_duplicates("task_id").rename(columns={"passed": "a_passed"})
+                        b_df = b["df"][["task_id", "passed"]].drop_duplicates("task_id").rename(columns={"passed": "b_passed"})
+                        joined = a_df.merge(b_df, on="task_id", how="inner")
+                        a_only = int((joined["a_passed"] & ~joined["b_passed"]).sum())
+                        b_only = int((~joined["a_passed"] & joined["b_passed"]).sum())
+                        both_pass = int((joined["a_passed"] & joined["b_passed"]).sum())
+                        both_fail = int((~joined["a_passed"] & ~joined["b_passed"]).sum())
+                        pair_rows.append({
+                            "run_a": a["name"],
+                            "run_b": b["name"],
+                            "common_tasks": len(joined),
+                            "a_only_pass": a_only,
+                            "b_only_pass": b_only,
+                            "both_pass": both_pass,
+                            "both_fail": both_fail,
+                            "net_a_minus_b": a_only - b_only,
+                        })
+                st.dataframe(pd.DataFrame(pair_rows), use_container_width=True, height=260)
+
         all_csv = summary_df.to_csv(index=False).encode("utf-8")
         st.download_button("Download comparison CSV", all_csv, "run_comparison.csv", "text/csv", use_container_width=True)
+        history_json = RUN_HISTORY_FILE.read_bytes() if RUN_HISTORY_FILE.exists() else json.dumps([], indent=2).encode("utf-8")
+        st.download_button("Download full run history JSON", history_json, "streamlit_run_history.json", "application/json", use_container_width=True)

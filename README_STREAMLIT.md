@@ -10,6 +10,14 @@ Disarankan memakai Python environment yang sama dengan notebook:
 .\run_streamlit.ps1
 ```
 
+Jika `Ctrl+C` di terminal hanya berhenti di tulisan `Stopping...` dan tidak selesai, jalankan terminal PowerShell baru dari folder repo lalu pakai:
+
+```powershell
+.\stop_streamlit.ps1
+```
+
+Ini akan force stop proses Streamlit/Python yang menjalankan dashboard. Hasil partial run terakhir tetap disimpan di `streamlit_latest_partial_results.jsonl` jika setidaknya satu task sudah selesai.
+
 Jika muncul `.env tidak lengkap atau rusak`, berarti folder `.env` di repo tidak berisi virtual environment lengkap. Dalam kasus itu buka terminal dari environment yang dipakai Jupyter notebook, lalu jalankan:
 
 ```powershell
@@ -37,6 +45,9 @@ Jangan pakai `streamlit run streamlit_app.py` jika command itu mengarah ke Pytho
 - Status run lebih jelas: model loading, start time, progress generation, live Pass@1, compile rate, reward, dan log task terakhir.
 - Setiap run disimpan di session, jadi hasil `Online Bandit`, `zero_shot`, `few_shot`, `cot`, dan `hint` bisa dibandingkan tanpa saling menimpa.
 - Tab `Compare Runs` menyediakan leaderboard, grafik perbandingan Pass@1/compile rate/reward, dan perbandingan pass/fail per task.
+- Run history disimpan permanen di `streamlit_run_history.json`, sehingga leaderboard tetap ada setelah refresh/restart.
+- Run yang salah setting bisa dihapus satu per satu dari bagian `Manage leaderboard runs` di tab `Compare Runs`.
+- Leaderboard menampilkan metrik yang lebih siap untuk thesis/jurnal: jumlah task, pass/fail, compile/fail, Pass@1 dengan 95% CI, runtime, alpha, force explore, seed, dan mode kompatibilitas notebook.
 - Hasil 164 task dibuat lebih nyaman dibaca lewat task explorer, filter outcome/strategy, dan raw table dalam expander.
 
 ## Catatan
