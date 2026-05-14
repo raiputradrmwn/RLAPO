@@ -93,6 +93,8 @@ def ci95_percent(successes: int, total: int) -> tuple[float, float, float]:
 def make_run_name(config: dict, started_at: str) -> str:
     if config["mode"] == "Online Bandit":
         method = "Online Bandit"
+        if config.get("compatible_fallback") or config.get("warm_start"):
+            method += " Compatible+"
     else:
         method = config["strategy"]
     return f"{started_at} | {method} | {config['num_tasks']} tasks x {config['repeats']}"
@@ -133,6 +135,10 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "seed": config["seed"],
         "chat_template": config["use_chat_template"],
         "notebook_compatible": config.get("notebook_compatible", False),
+        "compatible_fallback": config.get("compatible_fallback", False),
+        "warm_start": config.get("warm_start", False),
+        "warm_start_examples": config.get("warm_start_examples", 0),
+        "prompt_bank": config.get("prompt_bank", "Notebook 68 prompts"),
     }
 DEFAULT_PROMPTS = {
     "zero_shot": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
@@ -184,6 +190,183 @@ Reasoning: Let me think about this step by step. """,
 Complete this function:
 
 {prompt}""",
+}
+
+EDGE_CASE_PROMPTS = {
+    "zero_shot": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
+
+Read the docstring carefully. Handle edge cases such as empty inputs, duplicates, negative numbers, and boundary values when relevant.
+
+Complete this function:
+
+{prompt}""",
+    "few_shot": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
+
+Here are examples of completed functions:
+
+Example 1:
+Problem:
+def add(a, b):
+    \"\"\"Returns the sum of a and b\"\"\"
+
+Solution:
+    return a + b
+
+Example 2:
+Problem:
+def reverse_string(s):
+    \"\"\"Reverses the input string\"\"\"
+
+Solution:
+    return s[::-1]
+
+Example 3:
+Problem:
+def is_sorted(nums):
+    \"\"\"Returns True if nums is sorted in nondecreasing order\"\"\"
+
+Solution:
+    return all(nums[i] <= nums[i + 1] for i in range(len(nums) - 1))
+
+Now complete this function:
+
+{prompt}""",
+    "cot": """Think briefly about the edge cases, then write ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
+
+Problem:
+{prompt}
+
+Code:""",
+    "hint": """You are an expert Python programmer. Complete the function by writing ONLY the code that goes inside the function body. Do NOT repeat the function signature, do NOT add comments, do NOT write tests.
+
+{hint}
+
+Pay attention to edge cases and return exactly what the docstring asks.
+
+Complete this function:
+
+{prompt}""",
+}
+
+CONCISE_BODY_PROMPTS = {
+    "zero_shot": """Complete the Python function. Output only the missing indented function body. Do not repeat the signature, write tests, markdown, or explanations.
+
+{prompt}""",
+    "few_shot": """Complete the Python function. Output only the missing indented function body.
+
+Example:
+def add(a, b):
+    \"\"\"Returns the sum of a and b\"\"\"
+
+Solution:
+    return a + b
+
+Example:
+def reverse_string(s):
+    \"\"\"Reverses the input string\"\"\"
+
+Solution:
+    return s[::-1]
+
+Now complete:
+
+{prompt}""",
+    "cot": """Solve the task mentally, then output only the missing indented function body. No explanation, no signature, no tests.
+
+{prompt}""",
+    "hint": """Complete the Python function. Output only the missing indented function body.
+
+{hint}
+
+{prompt}""",
+}
+
+ALGORITHM_FOCUSED_PROMPTS = {
+    "zero_shot": """You are a careful algorithmic Python programmer. Implement the function body only. Do NOT repeat the signature, comments, tests, or markdown.
+
+Choose a simple correct algorithm and handle boundary cases.
+
+{prompt}""",
+    "few_shot": """You are a careful algorithmic Python programmer. Implement the function body only.
+
+Example 1:
+def has_close_elements(numbers, threshold):
+    \"\"\"Check if any two numbers are closer than threshold.\"\"\"
+Solution:
+    for i in range(len(numbers)):
+        for j in range(i + 1, len(numbers)):
+            if abs(numbers[i] - numbers[j]) < threshold:
+                return True
+    return False
+
+Example 2:
+def sort_numbers(nums):
+    \"\"\"Return numbers sorted increasingly.\"\"\"
+Solution:
+    return sorted(nums)
+
+Now implement:
+
+{prompt}""",
+    "cot": """Think about the algorithm, invariants, and edge cases. Then output only the missing indented function body. Do not include reasoning text.
+
+{prompt}""",
+    "hint": """You are a careful algorithmic Python programmer. Implement the function body only.
+
+{hint}
+
+Use direct control flow and standard-library operations when they are sufficient.
+
+{prompt}""",
+}
+
+ROBUST_TEST_PASSING_PROMPTS = {
+    "zero_shot": """Write the function body that will pass the hidden unit tests. Output only executable Python statements for the body. No signature, no tests, no markdown.
+
+Pay special attention to exact return type and edge cases described in the docstring.
+
+{prompt}""",
+    "few_shot": """Write the function body that will pass hidden unit tests. Output only executable Python statements for the body.
+
+Example 1:
+def count_vowels(s):
+    \"\"\"Counts vowels in a string.\"\"\"
+Solution:
+    return sum(ch in 'aeiouAEIOU' for ch in s)
+
+Example 2:
+def is_palindrome(s):
+    \"\"\"Checks whether a string is a palindrome.\"\"\"
+Solution:
+    return s == s[::-1]
+
+Example 3:
+def clamp(x, lo, hi):
+    \"\"\"Clamp x into [lo, hi].\"\"\"
+Solution:
+    return max(lo, min(x, hi))
+
+Now solve:
+
+{prompt}""",
+    "cot": """Review the docstring examples and hidden edge cases mentally. Output only the final function body, with correct indentation. No reasoning text.
+
+{prompt}""",
+    "hint": """Write the function body that will pass hidden unit tests. Output only executable Python statements for the body.
+
+{hint}
+
+Return exactly the requested value and type.
+
+{prompt}""",
+}
+
+PROMPT_BANKS = {
+    "Notebook 68 prompts": DEFAULT_PROMPTS,
+    "Edge-case optimized prompts": EDGE_CASE_PROMPTS,
+    "Concise body-only prompts": CONCISE_BODY_PROMPTS,
+    "Algorithm-focused prompts": ALGORITHM_FOCUSED_PROMPTS,
+    "Robust test-passing prompts": ROBUST_TEST_PASSING_PROMPTS,
 }
 
 
@@ -300,6 +483,36 @@ def evaluate_sample(problem: dict, completion: str, timeout: int):
     return bool(pass_success), bool(compile_success), reward, error
 
 
+def _unique_completion_candidates(generated: str) -> list[tuple[str, str]]:
+    candidates = [
+        ("notebook", extract_code_notebook(generated)),
+        ("compile_fallback", extract_code(generated)),
+    ]
+    unique = []
+    seen = set()
+    for method, completion in candidates:
+        key = completion.strip()
+        if key and key not in seen:
+            unique.append((method, completion))
+            seen.add(key)
+    return unique
+
+
+def evaluate_compatible_completion(problem: dict, generated: str, timeout: int, allow_compile_fallback: bool):
+    candidates = _unique_completion_candidates(generated)
+    primary_method, primary_completion = candidates[0]
+    primary_passed, primary_compile_ok, primary_reward, primary_error = evaluate_sample(problem, primary_completion, timeout)
+    if primary_passed or primary_compile_ok or not allow_compile_fallback:
+        return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
+
+    for method, completion in candidates[1:]:
+        passed, compile_ok, reward, error = evaluate_sample(problem, completion, timeout)
+        if compile_ok:
+            return completion, passed, compile_ok, reward, error, method
+
+    return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
+
+
 def extract_features(problem: dict, tokenizer=None) -> list[float]:
     prompt = problem["prompt"]
     docstring = prompt.split('"""')[1].lower() if '"""' in prompt and len(prompt.split('"""')) > 1 else prompt.lower()
@@ -378,6 +591,33 @@ class OnlineLinUCB:
             self.theta[arm] = np.linalg.inv(self.A[arm]) @ self.b[arm]
         except np.linalg.LinAlgError:
             self.theta[arm] = np.linalg.pinv(self.A[arm]) @ self.b[arm]
+
+
+def warm_start_bandit_from_runs(bandit: OnlineLinUCB, selected_run_names: list[str], history: list[dict], problems: dict, tokenizer) -> int:
+    if not selected_run_names:
+        return 0
+    arm_lookup = {name: idx for idx, name in STRATEGY_NAMES.items()}
+    selected = {name for name in selected_run_names}
+    examples = 0
+    for item in history:
+        if item.get("name") not in selected:
+            continue
+        df = item.get("df", pd.DataFrame())
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            continue
+        for _, row in df.iterrows():
+            strategy = row.get("strategy")
+            task_id = row.get("task_id")
+            if strategy not in arm_lookup or task_id not in problems:
+                continue
+            try:
+                reward = float(row.get("reward", 0.0))
+            except (TypeError, ValueError):
+                continue
+            features = np.array(extract_features(problems[task_id], tokenizer))
+            bandit.update(arm_lookup[strategy], features, reward)
+            examples += 1
+    return examples
 
 
 @st.cache_resource(show_spinner=False)
@@ -496,6 +736,19 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
         random.Random(config["seed"]).shuffle(items)
     items = items[: config["num_tasks"]]
     bandit = OnlineLinUCB(alpha=config["alpha"], force_explore=config["force_explore"]) if config["mode"] == "Online Bandit" else None
+    if bandit and config.get("warm_start"):
+        warm_examples = warm_start_bandit_from_runs(
+            bandit,
+            config.get("warm_start_run_names", []),
+            st.session_state.get("run_history", []),
+            problems,
+            tokenizer,
+        )
+        config["warm_start_examples"] = warm_examples
+        if warm_examples and config.get("warm_start_counts_as_exploration", True):
+            bandit.t = max(bandit.t, bandit.force_explore)
+    else:
+        config["warm_start_examples"] = 0
     rows = []
     top_line = st.empty()
     progress = st.progress(0, text="Waiting to start...")
@@ -566,8 +819,17 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 text=f"Evaluating {step}/{total_steps}: {task_id} | generation {generation_seconds:.1f}s",
             )
             eval_timer_start = time.perf_counter()
-            completion = extract_code_notebook(generated) if config["notebook_compatible"] and config["mode"] == "Online Bandit" else extract_code(generated)
-            passed, compile_ok, reward, error = evaluate_sample(problem, completion, config["timeout"])
+            if config["notebook_compatible"] and config["mode"] == "Online Bandit":
+                completion, passed, compile_ok, reward, error, extraction_method = evaluate_compatible_completion(
+                    problem,
+                    generated,
+                    config["timeout"],
+                    config.get("compatible_fallback", False),
+                )
+            else:
+                completion = extract_code(generated)
+                passed, compile_ok, reward, error = evaluate_sample(problem, completion, config["timeout"])
+                extraction_method = "standard"
             eval_seconds = time.perf_counter() - eval_timer_start
             task_seconds = time.perf_counter() - task_timer_start
             if bandit:
@@ -585,6 +847,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 "completion": completion,
                 "raw_generated": generated,
                 "prompt": prompt,
+                "extraction_method": extraction_method,
                 "task_seconds": task_seconds,
                 "generation_seconds": generation_seconds,
                 "eval_seconds": eval_seconds,
@@ -760,7 +1023,19 @@ with st.sidebar:
     with st.expander("Runtime", expanded=False):
         st.code(sys.executable, language="text")
     mode = st.radio("Mode", ["Fixed Strategy", "Online Bandit"])
-    strategy = st.selectbox("Fixed strategy", list(DEFAULT_PROMPTS), disabled=mode == "Online Bandit")
+    prompt_bank = st.selectbox(
+        "Prompt bank",
+        list(PROMPT_BANKS),
+        index=0,
+        help="Pilih Notebook 68 prompts untuk baseline lama, atau Edge-case optimized prompts untuk eksperimen prompt baru.",
+    )
+    active_prompts = PROMPT_BANKS[prompt_bank]
+    strategy = st.selectbox(
+        "Fixed strategy / prompt arm",
+        list(active_prompts),
+        disabled=mode == "Online Bandit",
+        help="Aktif hanya untuk Fixed Strategy. Pada Online Bandit, arm dipilih otomatis oleh policy bandit.",
+    )
     model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
     load_in_4bit = st.checkbox("Load 4-bit", value=True)
     use_chat_template = st.checkbox("Use tokenizer chat template", value=True)
@@ -770,6 +1045,38 @@ with st.sidebar:
     do_sample = st.checkbox("Sampling", value=False)
     temperature = st.slider("Temperature", 0.0, 1.5, 0.1, 0.05)
     notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=True, help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb.")
+    compatible_plus_enabled = mode == "Online Bandit" and notebook_compatible
+    with st.expander("Compatible+ improvement options", expanded=False):
+        compatible_fallback = st.checkbox(
+            "Compile-safe extraction fallback",
+            value=False,
+            disabled=not compatible_plus_enabled,
+            help="If strict notebook extraction does not compile, try the dashboard body extractor on the same raw generation. This keeps strict compatible output as first choice.",
+        )
+        fixed_run_options = [
+            item["name"]
+            for item in st.session_state["run_history"]
+            if item.get("config", {}).get("mode") == "Fixed Strategy"
+        ]
+        warm_start = st.checkbox(
+            "Warm-start LinUCB from saved fixed runs",
+            value=False,
+            disabled=not compatible_plus_enabled or not fixed_run_options,
+            help="Use rewards from selected fixed-strategy runs as prior data before the online bandit starts.",
+        )
+        warm_start_run_names = st.multiselect(
+            "Fixed runs for warm-start",
+            fixed_run_options,
+            disabled=not compatible_plus_enabled or not warm_start or not fixed_run_options,
+            help="Pilih run zero_shot/few_shot/cot/hint full 164 task yang sudah tersimpan.",
+        )
+        warm_start_counts_as_exploration = st.checkbox(
+            "Let warm-start skip forced exploration",
+            value=True,
+            disabled=not compatible_plus_enabled or not warm_start,
+            help="Jika ON, force_explore dianggap sudah dipenuhi oleh data warm-start sehingga bandit bisa langsung exploit policy yang terkalibrasi.",
+        )
+        st.caption("Compatible+ adalah varian eksperimen terpisah. Untuk reproduksi strict notebook 68%, matikan semua opsi ini.")
     generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
     timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
     shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
@@ -789,23 +1096,30 @@ tab_prompts, tab_run, tab_results, tab_compare = st.tabs(["Prompt Lab", "Run", "
 
 with tab_prompts:
     st.subheader("Prompt Templates")
+    st.info(f"Prompt bank yang dipilih di sidebar: `{prompt_bank}`")
+    if mode == "Online Bandit" and notebook_compatible:
+        st.warning("Online Bandit sedang memakai Notebook 68 compatible mode. Dalam mode ini prompt bank/editor di bawah TIDAK dipakai; dashboard memakai prompt persis dari bandit68%.ipynb.")
+    elif mode == "Online Bandit":
+        st.success("Online Bandit akan memilih otomatis arm dari prompt bank ini: zero_shot, few_shot, cot, hint.")
+    else:
+        st.success(f"Fixed Strategy akan memakai prompt `{strategy}` dari prompt bank ini.")
     st.write("Gunakan `{prompt}`, `{task_id}`, `{entry_point}`, dan `{hint}` sebagai placeholder.")
-    if st.button("Reset prompt editor to notebook 68 defaults", use_container_width=True):
-        for prompt_name in DEFAULT_PROMPTS:
-            st.session_state.pop(f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_name}", None)
+    if st.button("Reset prompt editor to selected bank defaults", use_container_width=True):
+        for prompt_name in active_prompts:
+            st.session_state.pop(f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_bank}_{prompt_name}", None)
         st.rerun()
     prompt_templates = {}
     cols = st.columns(2)
-    for idx, name in enumerate(DEFAULT_PROMPTS):
+    for idx, name in enumerate(active_prompts):
         with cols[idx % 2]:
             prompt_templates[name] = st.text_area(
                 name,
-                DEFAULT_PROMPTS[name],
+                active_prompts[name],
                 height=260,
-                key=f"prompt_{PROMPT_EDITOR_VERSION}_{name}",
+                key=f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_bank}_{name}",
             )
     preview_task = st.selectbox("Preview task", list(problems.keys()))
-    preview_strategy = st.selectbox("Preview strategy", list(DEFAULT_PROMPTS), key="preview_strategy")
+    preview_strategy = st.selectbox("Preview strategy", list(active_prompts), key="preview_strategy")
     st.code(build_prompt(prompt_templates[preview_strategy], problems[preview_task], use_chat_template=False), language="text")
 
 with tab_run:
@@ -820,9 +1134,14 @@ with tab_run:
     )
     if mode == "Online Bandit":
         st.caption("Untuk mendekati notebook 68%: aktifkan Notebook 68 compatible mode, 164 soal, repeat 1, shuffle nonaktif, alpha 0.3, force explore 40, max_new_tokens 512, sampling off.")
+        if notebook_compatible and prompt_bank != "Notebook 68 prompts":
+            st.warning("Notebook 68 compatible mode sedang ON, jadi Online Bandit akan mengabaikan selected prompt bank dan memakai prompt notebook persis.")
+        if compatible_fallback or warm_start:
+            st.info("Compatible+ aktif: run ini adalah varian improvement terpisah, bukan strict reproduction dari notebook 68%.")
     config = {
         "mode": mode,
         "strategy": strategy,
+        "prompt_bank": prompt_bank,
         "model_name": model_name,
         "load_in_4bit": load_in_4bit,
         "use_chat_template": use_chat_template,
@@ -832,6 +1151,10 @@ with tab_run:
         "do_sample": do_sample,
         "temperature": temperature,
         "notebook_compatible": notebook_compatible,
+        "compatible_fallback": compatible_fallback if compatible_plus_enabled else False,
+        "warm_start": warm_start if compatible_plus_enabled else False,
+        "warm_start_run_names": warm_start_run_names if compatible_plus_enabled and warm_start else [],
+        "warm_start_counts_as_exploration": warm_start_counts_as_exploration if compatible_plus_enabled else False,
         "generation_timeout": generation_timeout,
         "timeout": timeout,
         "shuffle": shuffle,
@@ -936,7 +1259,8 @@ with tab_results:
         if search_task:
             visible = visible[visible["task_id"].str.contains(search_task, case=False, regex=False)]
 
-        compact_cols = ["repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error"]
+        compact_cols = ["repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "extraction_method", "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error"]
+        compact_cols = [col for col in compact_cols if col in visible.columns]
         st.dataframe(visible[compact_cols], use_container_width=True, height=360)
         with st.expander("Show full raw results including prompts and completions", expanded=False):
             st.dataframe(visible, use_container_width=True, height=520)
@@ -964,6 +1288,10 @@ with tab_compare:
             "compiled": 0,
             "compile_failed": 0,
             "notebook_compatible": False,
+            "compatible_fallback": False,
+            "warm_start": False,
+            "warm_start_examples": 0,
+            "prompt_bank": "Notebook 68 prompts",
         }
         for col, default in defaults.items():
             if col not in summary_df.columns:
@@ -1002,6 +1330,7 @@ with tab_compare:
             "run_name",
             "mode",
             "strategy",
+            "prompt_bank",
             "generations",
             "passed",
             "failed",
@@ -1017,6 +1346,9 @@ with tab_compare:
             "seed",
             "chat_template",
             "notebook_compatible",
+            "compatible_fallback",
+            "warm_start",
+            "warm_start_examples",
         ]
         st.dataframe(summary_df[display_cols], use_container_width=True, height=300)
         st.caption("CI menggunakan normal approximation 95%. Untuk laporan thesis/jurnal, gunakan run 164 task penuh dan setting yang konsisten.")
