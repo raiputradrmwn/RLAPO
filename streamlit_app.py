@@ -21,12 +21,18 @@ HUMANEVAL_FILE = ROOT / "HumanEval.jsonl.gz"
 CHECKPOINT_FILE = ROOT / "streamlit_latest_partial_results.jsonl"
 RUN_HISTORY_FILE = ROOT / "streamlit_run_history.json"
 APP_TITLE = "RL Prompt Engineering Lab"
-PROMPT_EDITOR_VERSION = "notebook_68_prompts_v4"
+PROMPT_EDITOR_VERSION = "problem_type_aware_prompts_v1"
 STRATEGY_NAMES = {
     0: "zero_shot",
     1: "few_shot",
     2: "cot",
     3: "hint",
+}
+ARM_ROLES = {
+    "zero_shot": ("Direct Robust", "Fast implementation with exact return type and edge-case awareness."),
+    "few_shot": ("Pattern Learning", "Learns HumanEval-style structure from examples before solving."),
+    "cot": ("Silent Algorithm", "Uses internal algorithm planning but outputs only final code."),
+    "hint": ("Guided Edge Cases", "Uses problem-specific hints for constraints and failure modes."),
 }
 
 
@@ -81,6 +87,40 @@ def save_run_history(history: list[dict]):
     RUN_HISTORY_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def df_to_markdown_table(df: pd.DataFrame) -> str:
+    if df.empty:
+        return ""
+    headers = list(df.columns)
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+    for _, row in df.iterrows():
+        values = [str(row[col]).replace("\n", " ") for col in headers]
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
+
+
+def df_to_latex_table(df: pd.DataFrame, caption: str, label: str) -> str:
+    latex = df.to_latex(index=False, escape=True, float_format="%.2f")
+    return "\n".join([
+        "\\begin{table}[htbp]",
+        "\\centering",
+        f"\\caption{{{caption}}}",
+        f"\\label{{{label}}}",
+        latex,
+        "\\end{table}",
+    ])
+
+
+def safe_download_name(text: str, suffix: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return f"{cleaned[:80] or 'rl_apo'}{suffix}"
+
+
+def bool_badge(value: bool) -> str:
+    return "ON" if value else "OFF"
+
+
 def ci95_percent(successes: int, total: int) -> tuple[float, float, float]:
     if total <= 0:
         return 0.0, 0.0, 0.0
@@ -95,6 +135,10 @@ def make_run_name(config: dict, started_at: str) -> str:
         method = "Online Bandit"
         if config.get("compatible_fallback") or config.get("warm_start"):
             method += " Compatible+"
+        if config.get("similarity_memory"):
+            method += " Sim"
+        if config.get("weak_arm_guard") or config.get("explore_order") not in (None, "Notebook order"):
+            method += " Guard"
     else:
         method = config["strategy"]
     return f"{started_at} | {method} | {config['num_tasks']} tasks x {config['repeats']}"
@@ -138,6 +182,14 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "compatible_fallback": config.get("compatible_fallback", False),
         "warm_start": config.get("warm_start", False),
         "warm_start_examples": config.get("warm_start_examples", 0),
+        "similarity_memory": config.get("similarity_memory", False),
+        "memory_top_k": config.get("memory_top_k", 0),
+        "memory_lambda": config.get("memory_lambda", 0.0),
+        "memory_threshold": config.get("memory_threshold", 0.0),
+        "explore_order": config.get("explore_order", "Notebook order"),
+        "weak_arm_guard": config.get("weak_arm_guard", False),
+        "weak_arm_min_samples": config.get("weak_arm_min_samples", 0),
+        "weak_arm_margin": config.get("weak_arm_margin", 0.0),
         "prompt_bank": config.get("prompt_bank", "Notebook 68 prompts"),
     }
 DEFAULT_PROMPTS = {
@@ -361,7 +413,67 @@ Return exactly the requested value and type.
 {prompt}""",
 }
 
+PROBLEM_TYPE_AWARE_PROMPTS = {
+    "zero_shot": """You are a precise Python programmer. Implement the function so it passes the visible examples and hidden unit tests.
+
+Output only executable Python code for the missing function body. Do not include markdown, explanations, tests, or unrelated helper text.
+
+Before writing code, infer the problem type from the docstring: string processing, list processing, math, parsing, sorting, recursion, or edge-case handling. Use the simplest correct algorithm. Preserve exact return type and handle empty inputs, duplicates, boundary values, and examples in the docstring.
+
+{prompt}""",
+    "few_shot": """You are a precise Python programmer. Learn the style from these HumanEval-like examples, then output only executable Python code for the missing function body.
+
+Example 1: string filtering with edge cases
+def remove_vowels(text: str) -> str:
+    \"\"\"Return text with all vowels removed.\"\"\"
+Solution:
+    vowels = set('aeiouAEIOU')
+    return ''.join(ch for ch in text if ch not in vowels)
+
+Example 2: pairwise list condition
+def any_close(numbers, threshold):
+    \"\"\"Return True if any two numbers differ by less than threshold.\"\"\"
+Solution:
+    for i in range(len(numbers)):
+        for j in range(i + 1, len(numbers)):
+            if abs(numbers[i] - numbers[j]) < threshold:
+                return True
+    return False
+
+Example 3: balanced group parsing
+def split_balanced_groups(paren_string: str):
+    \"\"\"Split a string into balanced parenthesis groups, ignoring spaces.\"\"\"
+Solution:
+    groups = []
+    current = ''
+    depth = 0
+    for ch in paren_string.replace(' ', ''):
+        current += ch
+        depth += 1 if ch == '(' else -1
+        if depth == 0:
+            groups.append(current)
+            current = ''
+    return groups
+
+Now solve the target function. Output only the missing function body.
+
+{prompt}""",
+    "cot": """Think silently about the algorithm, edge cases, and exact return type. Then output only the final executable Python code for the missing function body.
+
+Do not include reasoning text, markdown, tests, or the function signature.
+
+{prompt}""",
+    "hint": """You are a precise Python programmer. Use the problem-specific hint and implement only the missing function body.
+
+{hint}
+
+Also check the docstring examples, exact return type, empty inputs, duplicates, and boundary values. Use direct Python control flow and standard-library operations when sufficient. Output only executable Python code.
+
+{prompt}""",
+}
+
 PROMPT_BANKS = {
+    "Problem-type aware prompts": PROBLEM_TYPE_AWARE_PROMPTS,
     "Notebook 68 prompts": DEFAULT_PROMPTS,
     "Edge-case optimized prompts": EDGE_CASE_PROMPTS,
     "Concise body-only prompts": CONCISE_BODY_PROMPTS,
@@ -444,6 +556,7 @@ def make_hint(problem: dict) -> str:
 def check_compile(code: str) -> int:
     try:
         ast.parse(code)
+        compile(code, "<humaneval_candidate>", "exec")
         return 1
     except SyntaxError:
         return 0
@@ -502,7 +615,8 @@ def evaluate_compatible_completion(problem: dict, generated: str, timeout: int, 
     candidates = _unique_completion_candidates(generated)
     primary_method, primary_completion = candidates[0]
     primary_passed, primary_compile_ok, primary_reward, primary_error = evaluate_sample(problem, primary_completion, timeout)
-    if primary_passed or primary_compile_ok or not allow_compile_fallback:
+    syntax_like_error = isinstance(primary_error, str) and "SyntaxError" in primary_error
+    if primary_passed or (primary_compile_ok and not syntax_like_error) or not allow_compile_fallback:
         return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
 
     for method, completion in candidates[1:]:
@@ -549,11 +663,12 @@ def extract_features(problem: dict, tokenizer=None) -> list[float]:
 
 
 class OnlineLinUCB:
-    def __init__(self, num_arms=4, dim_context=19, alpha=0.3, force_explore=40):
+    def __init__(self, num_arms=4, dim_context=19, alpha=0.3, force_explore=40, explore_order=None):
         self.num_arms = num_arms
         self.dim_context = dim_context
         self.alpha = alpha
         self.force_explore = force_explore
+        self.explore_order = explore_order or list(range(num_arms))
         self.t = 0
         self.A = [np.eye(dim_context) + 0.01 * np.eye(dim_context) for _ in range(num_arms)]
         self.b = [np.zeros((dim_context, 1)) for _ in range(num_arms)]
@@ -561,12 +676,7 @@ class OnlineLinUCB:
         self.arm_counts = [0] * num_arms
         self.arm_rewards = [[] for _ in range(num_arms)]
 
-    def select_arm(self, context):
-        self.t += 1
-        if self.t <= self.force_explore:
-            arm = (self.t - 1) % self.num_arms
-            self.arm_counts[arm] += 1
-            return arm
+    def score_arms(self, context) -> list[float]:
         context = context.reshape(-1, 1)
         scores = []
         for arm in range(self.num_arms):
@@ -578,9 +688,49 @@ class OnlineLinUCB:
             uncertainty = float((self.alpha * np.sqrt(context.T @ A_inv @ context))[0, 0])
             history = float(np.mean(self.arm_rewards[arm])) if self.arm_rewards[arm] else 0.0
             scores.append(mean + uncertainty + history * 0.5)
+        return scores
+
+    def select_arm(self, context):
+        self.t += 1
+        if self.t <= self.force_explore:
+            arm = self.explore_order[(self.t - 1) % len(self.explore_order)]
+            self.arm_counts[arm] += 1
+            return arm
+        scores = self.score_arms(context)
         arm = int(np.argmax(scores))
         self.arm_counts[arm] += 1
         return arm
+
+    def choose_arm(
+        self,
+        context,
+        memory_scores: list[float] | None = None,
+        memory_lambda: float = 0.0,
+        weak_arm_guard: bool = False,
+        weak_arm_min_samples: int = 8,
+        weak_arm_margin: float = 0.20,
+    ):
+        self.t += 1
+        linucb_scores = self.score_arms(context)
+        if memory_scores is None:
+            memory_scores = [0.0] * self.num_arms
+        combined_scores = [linucb_scores[idx] + memory_lambda * memory_scores[idx] for idx in range(self.num_arms)]
+        forced = self.t <= self.force_explore
+        if forced:
+            arm = self.explore_order[(self.t - 1) % len(self.explore_order)]
+        else:
+            candidate_scores = combined_scores.copy()
+            if weak_arm_guard:
+                averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
+                eligible = [idx for idx, rewards in enumerate(self.arm_rewards) if len(rewards) >= weak_arm_min_samples]
+                if eligible:
+                    best_average = max(averages[idx] for idx in eligible)
+                    for idx in eligible:
+                        if averages[idx] < best_average - weak_arm_margin:
+                            candidate_scores[idx] = -1e9
+            arm = int(np.argmax(candidate_scores))
+        self.arm_counts[arm] += 1
+        return arm, linucb_scores, memory_scores, combined_scores, forced
 
     def update(self, arm, context, reward):
         context = context.reshape(-1, 1)
@@ -618,6 +768,44 @@ def warm_start_bandit_from_runs(bandit: OnlineLinUCB, selected_run_names: list[s
             bandit.update(arm_lookup[strategy], features, reward)
             examples += 1
     return examples
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denominator <= 0.0:
+        return 0.0
+    return float(np.dot(a, b) / denominator)
+
+
+def compute_similarity_memory_scores(
+    context: np.ndarray,
+    memory: list[dict],
+    num_arms: int = 4,
+    top_k: int = 8,
+    threshold: float = 0.15,
+) -> tuple[list[float], list[str], float]:
+    if not memory:
+        return [0.0] * num_arms, [], 0.0
+    scored = []
+    for item in memory:
+        similarity = cosine_similarity(context, item["features"])
+        if similarity >= threshold:
+            scored.append((similarity, item))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    neighbors = scored[:top_k]
+    scores = [0.0] * num_arms
+    weights = [0.0] * num_arms
+    for similarity, item in neighbors:
+        arm = int(item["arm"])
+        if 0 <= arm < num_arms:
+            scores[arm] += similarity * float(item["reward"])
+            weights[arm] += similarity
+    for arm in range(num_arms):
+        if weights[arm] > 0.0:
+            scores[arm] /= weights[arm]
+    neighbor_ids = [f"{item['task_id']}:{STRATEGY_NAMES.get(int(item['arm']), item['arm'])}:{similarity:.2f}" for similarity, item in neighbors[:3]]
+    best_similarity = float(neighbors[0][0]) if neighbors else 0.0
+    return scores, neighbor_ids, best_similarity
 
 
 @st.cache_resource(show_spinner=False)
@@ -735,7 +923,16 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     if config["shuffle"]:
         random.Random(config["seed"]).shuffle(items)
     items = items[: config["num_tasks"]]
-    bandit = OnlineLinUCB(alpha=config["alpha"], force_explore=config["force_explore"]) if config["mode"] == "Online Bandit" else None
+    explore_orders = {
+        "Notebook order": [0, 1, 2, 3],
+        "Strong-first (CoT, Hint, Zero, Few)": [2, 3, 0, 1],
+        "CoT/Hint only during exploration": [2, 3],
+    }
+    bandit = OnlineLinUCB(
+        alpha=config["alpha"],
+        force_explore=config["force_explore"],
+        explore_order=explore_orders.get(config.get("explore_order", "Notebook order"), [0, 1, 2, 3]),
+    ) if config["mode"] == "Online Bandit" else None
     if bandit and config.get("warm_start"):
         warm_examples = warm_start_bandit_from_runs(
             bandit,
@@ -750,6 +947,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     else:
         config["warm_start_examples"] = 0
     rows = []
+    similarity_memory = []
     top_line = st.empty()
     progress = st.progress(0, text="Waiting to start...")
     live_panel = st.empty()
@@ -766,12 +964,42 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
             step += 1
             if bandit:
                 features = np.array(extract_features(problem, tokenizer))
-                arm = bandit.select_arm(features)
+                if config.get("similarity_memory"):
+                    memory_scores, nearest_examples, best_similarity = compute_similarity_memory_scores(
+                        features,
+                        similarity_memory,
+                        num_arms=len(STRATEGY_NAMES),
+                        top_k=config.get("memory_top_k", 8),
+                        threshold=config.get("memory_threshold", 0.15),
+                    )
+                    arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
+                        features,
+                        memory_scores=memory_scores,
+                        memory_lambda=config.get("memory_lambda", 0.4),
+                        weak_arm_guard=config.get("weak_arm_guard", False),
+                        weak_arm_min_samples=config.get("weak_arm_min_samples", 8),
+                        weak_arm_margin=config.get("weak_arm_margin", 0.20),
+                    )
+                else:
+                    arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
+                        features,
+                        weak_arm_guard=config.get("weak_arm_guard", False),
+                        weak_arm_min_samples=config.get("weak_arm_min_samples", 8),
+                        weak_arm_margin=config.get("weak_arm_margin", 0.20),
+                    )
+                    nearest_examples = []
+                    best_similarity = 0.0
                 strategy = STRATEGY_NAMES[arm]
             else:
                 strategy = config["strategy"]
                 arm = {name: idx for idx, name in STRATEGY_NAMES.items()}[strategy]
                 features = np.array(extract_features(problem, tokenizer))
+                linucb_scores = [0.0] * len(STRATEGY_NAMES)
+                memory_scores = [0.0] * len(STRATEGY_NAMES)
+                combined_scores = [0.0] * len(STRATEGY_NAMES)
+                forced_explore = False
+                nearest_examples = []
+                best_similarity = 0.0
 
             if config["notebook_compatible"] and config["mode"] == "Online Bandit":
                 prompt = build_notebook_prompt(arm, problem, tokenizer)
@@ -834,6 +1062,13 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
             task_seconds = time.perf_counter() - task_timer_start
             if bandit:
                 bandit.update(arm, features, reward)
+                if config.get("similarity_memory"):
+                    similarity_memory.append({
+                        "task_id": task_id,
+                        "features": features.copy(),
+                        "arm": arm,
+                        "reward": reward,
+                    })
 
             rows.append({
                 "repeat": repeat + 1,
@@ -848,6 +1083,12 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 "raw_generated": generated,
                 "prompt": prompt,
                 "extraction_method": extraction_method,
+                "linucb_score": linucb_scores[arm] if arm < len(linucb_scores) else 0.0,
+                "memory_score": memory_scores[arm] if arm < len(memory_scores) else 0.0,
+                "combined_score": combined_scores[arm] if arm < len(combined_scores) else 0.0,
+                "forced_explore": forced_explore,
+                "nearest_examples": ", ".join(nearest_examples),
+                "best_similarity": best_similarity,
                 "task_seconds": task_seconds,
                 "generation_seconds": generation_seconds,
                 "eval_seconds": eval_seconds,
@@ -919,6 +1160,99 @@ st.markdown(
         background: rgba(255,255,255,.08);
         font-size: .85rem;
     }
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: .85rem;
+        margin: .9rem 0 1.1rem 0;
+    }
+    .status-card {
+        border-radius: 20px;
+        padding: 1rem 1.05rem;
+        color: #0f172a;
+        border: 1px solid rgba(148, 163, 184, .25);
+        box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
+    }
+    .status-card .label {font-size: .78rem; opacity: .72; text-transform: uppercase; letter-spacing: .06em; font-weight: 700;}
+    .status-card .value {font-size: 1.45rem; line-height: 1.2; font-weight: 800; margin-top: .25rem;}
+    .status-card .hint {font-size: .84rem; opacity: .78; margin-top: .3rem;}
+    .card-blue {background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);}
+    .card-green {background: linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%);}
+    .card-violet {background: linear-gradient(135deg, #ede9fe 0%, #faf5ff 100%);}
+    .card-amber {background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%);}
+    .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin: .4rem 0 .8rem 0;
+    }
+    .section-title h2, .section-title h3 {margin: 0; letter-spacing: -.02em;}
+    .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: .25rem .65rem;
+        font-size: .78rem;
+        font-weight: 700;
+        background: #e0f2fe;
+        color: #075985;
+        border: 1px solid #bae6fd;
+    }
+    .side-panel {
+        border-radius: 18px;
+        padding: .95rem 1rem;
+        margin: .7rem 0;
+        background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 55%, #7c3aed 100%);
+        color: white;
+        box-shadow: 0 12px 30px rgba(30, 64, 175, .28);
+    }
+    .side-panel .title {font-weight: 800; letter-spacing: -.02em; font-size: 1.02rem;}
+    .side-panel .sub {font-size: .82rem; color: #dbeafe; margin-top: .25rem;}
+    .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: .75rem;
+        margin: .9rem 0;
+    }
+    .mini-card {
+        border-radius: 18px;
+        padding: .9rem;
+        background: rgba(255,255,255,.86);
+        border: 1px solid rgba(148, 163, 184, .24);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, .06);
+    }
+    .mini-card .name {font-weight: 800; color: #111827; margin-bottom: .2rem;}
+    .mini-card .role {font-size: .78rem; color: #2563eb; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;}
+    .mini-card .desc {font-size: .86rem; color: #475569; margin-top: .35rem;}
+    .setup-card {
+        border-radius: 22px;
+        padding: 1rem 1.1rem;
+        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid rgba(148, 163, 184, .28);
+        box-shadow: 0 12px 32px rgba(15, 23, 42, .07);
+        margin-bottom: .9rem;
+    }
+    .setup-row {display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .75rem;}
+    .setup-chip {
+        border-radius: 999px;
+        padding: .28rem .68rem;
+        background: #f1f5f9;
+        color: #334155;
+        border: 1px solid #e2e8f0;
+        font-size: .82rem;
+        font-weight: 700;
+    }
+    .setup-chip.good {background: #dcfce7; color: #166534; border-color: #bbf7d0;}
+    .setup-chip.warn {background: #fef3c7; color: #92400e; border-color: #fde68a;}
+    .cta-card {
+        border-radius: 24px;
+        padding: 1.1rem 1.2rem;
+        background: radial-gradient(circle at 10% 15%, rgba(34,197,94,.24), transparent 30%), linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        color: #f8fafc;
+        box-shadow: 0 18px 42px rgba(15, 23, 42, .24);
+        margin: 1rem 0;
+    }
+    .cta-card b {color: #bbf7d0;}
     .soft-card {
         border: 1px solid rgba(59, 130, 246, .22);
         border-radius: 18px;
@@ -989,6 +1323,16 @@ st.markdown(
         div[data-testid="stVerticalBlockBorderWrapper"] {
             border-color: rgba(148, 163, 184, .22) !important;
         }
+        .status-card {color: #e5e7eb; border-color: rgba(148, 163, 184, .22);}
+        .card-blue {background: linear-gradient(135deg, #172554 0%, #0f172a 100%);}
+        .card-green {background: linear-gradient(135deg, #14532d 0%, #0f172a 100%);}
+        .card-violet {background: linear-gradient(135deg, #4c1d95 0%, #0f172a 100%);}
+        .card-amber {background: linear-gradient(135deg, #78350f 0%, #0f172a 100%);}
+        .pill {background: #0f172a; color: #bae6fd; border-color: rgba(125, 211, 252, .35);}
+        .mini-card {background: rgba(15, 23, 42, .82); border-color: rgba(148, 163, 184, .24);}
+        .mini-card .name {color: #f8fafc;}
+        .mini-card .desc {color: #cbd5e1;}
+        .setup-card {background: linear-gradient(135deg, #0b1220 0%, #111827 100%); border-color: rgba(148, 163, 184, .24);}
     }
     </style>
     """,
@@ -998,12 +1342,12 @@ st.markdown(
     f"""
     <div class="hero">
       <h1>{APP_TITLE}</h1>
-      <p>Interactive HumanEval runner untuk fixed prompting dan online contextual bandit. Simpan beberapa run, bandingkan Bandit vs Zero-shot vs Few-shot vs CoT vs Hint, dan telusuri output tanpa tenggelam dalam log 164 soal.</p>
+      <p>Modern HumanEval lab untuk RL-APO: jalankan fixed prompts dan online contextual bandit, bandingkan run, lalu export chart, tabel, dan raw data yang siap masuk thesis.</p>
       <div class="hero-badges">
-        <span class="hero-badge">One-click experiment</span>
-        <span class="hero-badge">Run comparison</span>
-        <span class="hero-badge">Expandable 164-task log</span>
-        <span class="hero-badge">CSV / JSONL export</span>
+        <span class="hero-badge">Problem-type prompt bank</span>
+        <span class="hero-badge">Similarity-aware RL-APO</span>
+        <span class="hero-badge">Thesis-ready exports</span>
+        <span class="hero-badge">Leaderboard comparison</span>
       </div>
     </div>
     """,
@@ -1017,17 +1361,32 @@ if not HUMANEVAL_FILE.exists():
 problems = read_humaneval(HUMANEVAL_FILE)
 
 with st.sidebar:
-    st.header("Experiment Setup")
-    st.caption("Gunakan Python environment yang sama dengan notebook supaya CUDA/model cache terbaca.")
-    st.markdown(f"<span class='run-chip'>{len(st.session_state['run_history'])} saved runs</span>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="side-panel">
+          <div class="title">RL-APO Control Center</div>
+          <div class="sub">Configure experiments, prompt banks, and bandit policy in one place.</div>
+          <div style="margin-top:.65rem"><span class="hero-badge">{len(st.session_state['run_history'])} saved runs</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.expander("Runtime", expanded=False):
         st.code(sys.executable, language="text")
-    mode = st.radio("Mode", ["Fixed Strategy", "Online Bandit"])
+    st.markdown("<span class='pill'>Step 1</span> <b>Choose experiment type</b>", unsafe_allow_html=True)
+    mode = st.radio("Mode", ["Fixed Strategy", "Online Bandit"], horizontal=True)
+    experiment_preset = st.selectbox(
+        "Experiment preset",
+        ["Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
+        index=0,
+        help="Preset hanya memberi panduan default setting. Kamu tetap bisa mengubah kontrol di bawahnya.",
+    )
+    st.markdown("<span class='pill'>Step 2</span> <b>Select prompt policy</b>", unsafe_allow_html=True)
     prompt_bank = st.selectbox(
         "Prompt bank",
         list(PROMPT_BANKS),
         index=0,
-        help="Pilih Notebook 68 prompts untuk baseline lama, atau Edge-case optimized prompts untuk eksperimen prompt baru.",
+        help="Problem-type aware prompts dirancang agar zero/few/cot/hint punya peran berbeda. Notebook 68 prompts dipakai untuk reproduksi baseline lama.",
     )
     active_prompts = PROMPT_BANKS[prompt_bank]
     strategy = st.selectbox(
@@ -1036,20 +1395,26 @@ with st.sidebar:
         disabled=mode == "Online Bandit",
         help="Aktif hanya untuk Fixed Strategy. Pada Online Bandit, arm dipilih otomatis oleh policy bandit.",
     )
-    model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
-    load_in_4bit = st.checkbox("Load 4-bit", value=True)
-    use_chat_template = st.checkbox("Use tokenizer chat template", value=True)
-    num_tasks = st.slider("Jumlah soal", 1, min(164, len(problems)), 5)
+    st.markdown("<span class='pill'>Step 3</span> <b>Model and dataset</b>", unsafe_allow_html=True)
+    with st.expander("Model settings", expanded=True):
+        model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
+        load_in_4bit = st.checkbox("Load 4-bit", value=True)
+        use_chat_template = st.checkbox("Use tokenizer chat template", value=True)
+    default_tasks = min(164, len(problems)) if experiment_preset == "Thesis full run" else min(10, len(problems))
+    num_tasks = st.slider("Jumlah soal", 1, min(164, len(problems)), default_tasks)
     repeats = st.slider("Repeat per soal", 1, 5, 1)
-    max_new_tokens = st.slider("Max new tokens", 64, 1024, 512, 64)
-    do_sample = st.checkbox("Sampling", value=False)
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.1, 0.05)
-    notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=True, help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb.")
+    with st.expander("Generation settings", expanded=False):
+        max_new_tokens = st.slider("Max new tokens", 64, 1024, 512, 64)
+        do_sample = st.checkbox("Sampling", value=False)
+        temperature = st.slider("Temperature", 0.0, 1.5, 0.1, 0.05)
+    default_notebook_compatible = experiment_preset == "Strict notebook reproduction"
+    notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=default_notebook_compatible, help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb. Turn OFF to test selected prompt bank.")
     compatible_plus_enabled = mode == "Online Bandit" and notebook_compatible
-    with st.expander("Compatible+ improvement options", expanded=False):
+    st.markdown("<span class='pill'>Step 4</span> <b>RL-APO policy tuning</b>", unsafe_allow_html=True)
+    with st.expander("Advanced bandit options", expanded=mode == "Online Bandit"):
         compatible_fallback = st.checkbox(
             "Compile-safe extraction fallback",
-            value=False,
+            value=experiment_preset == "Thesis full run",
             disabled=not compatible_plus_enabled,
             help="If strict notebook extraction does not compile, try the dashboard body extractor on the same raw generation. This keeps strict compatible output as first choice.",
         )
@@ -1060,7 +1425,7 @@ with st.sidebar:
         ]
         warm_start = st.checkbox(
             "Warm-start LinUCB from saved fixed runs",
-            value=False,
+            value=experiment_preset == "Thesis full run",
             disabled=not compatible_plus_enabled or not fixed_run_options,
             help="Use rewards from selected fixed-strategy runs as prior data before the online bandit starts.",
         )
@@ -1076,13 +1441,54 @@ with st.sidebar:
             disabled=not compatible_plus_enabled or not warm_start,
             help="Jika ON, force_explore dianggap sudah dipenuhi oleh data warm-start sehingga bandit bisa langsung exploit policy yang terkalibrasi.",
         )
-        st.caption("Compatible+ adalah varian eksperimen terpisah. Untuk reproduksi strict notebook 68%, matikan semua opsi ini.")
-    generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
-    timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
-    shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
-    seed = st.number_input("Seed", value=42, step=1)
-    alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.3, 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
-    force_explore = st.slider("Force explore steps", 0, 80, 40, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40.")
+        similarity_memory = st.checkbox(
+            "Similarity-aware prompt memory",
+            value=False,
+            disabled=mode != "Online Bandit",
+            help="Choose prompts using rewards from previous tasks with similar context features, not only global arm reward.",
+        )
+        memory_top_k = st.slider("Memory top-k similar tasks", 1, 20, 8, disabled=mode != "Online Bandit" or not similarity_memory)
+        memory_lambda = st.slider("Memory weight lambda", 0.0, 1.5, 0.4, 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
+        memory_threshold = st.slider("Similarity threshold", 0.0, 1.0, 0.15, 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
+        explore_order = st.selectbox(
+            "Forced exploration order",
+            ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint only during exploration"],
+            index=1 if experiment_preset != "Strict notebook reproduction" else 0,
+            disabled=mode != "Online Bandit",
+            help="Notebook order is strict. Strong-first reduces early damage from weak arms observed in recent runs.",
+        )
+        weak_arm_guard = st.checkbox(
+            "Adaptive weak-arm guard",
+            value=experiment_preset != "Strict notebook reproduction",
+            disabled=mode != "Online Bandit",
+            help="After an arm has enough samples, avoid selecting it if its reward is clearly below the best sampled arm.",
+        )
+        weak_arm_min_samples = st.slider("Weak-arm min samples", 2, 20, 8, disabled=mode != "Online Bandit" or not weak_arm_guard)
+        weak_arm_margin = st.slider("Weak-arm reward margin", 0.05, 0.60, 0.20, 0.05, disabled=mode != "Online Bandit" or not weak_arm_guard)
+        alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.3, 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
+        default_force_explore = 40 if experiment_preset == "Strict notebook reproduction" else 20
+        force_explore = st.slider("Force explore steps", 0, 80, default_force_explore, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40. Untuk optimized prompt bank, 20 biasanya lebih aman.")
+        st.caption("Advanced options adalah varian eksperimen terpisah. Untuk strict reproduction, gunakan preset Strict notebook reproduction.")
+    with st.expander("Runtime safety", expanded=False):
+        generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
+        timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
+        shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
+        seed = st.number_input("Seed", value=42, step=1)
+    st.markdown(
+        f"""
+        <div class="setup-card">
+          <b>Ready summary</b>
+          <div class="setup-row">
+            <span class="setup-chip good">{mode}</span>
+            <span class="setup-chip">{prompt_bank}</span>
+            <span class="setup-chip">{num_tasks} tasks</span>
+            <span class="setup-chip {'warn' if notebook_compatible else 'good'}">Notebook compat {bool_badge(notebook_compatible)}</span>
+            <span class="setup-chip {'good' if similarity_memory else ''}">Similarity {bool_badge(similarity_memory)}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if st.button("Clear saved runs", use_container_width=True):
         st.session_state["run_history"] = []
         st.session_state["last_results"] = None
@@ -1092,42 +1498,78 @@ with st.sidebar:
             RUN_HISTORY_FILE.unlink()
         st.rerun()
 
-tab_prompts, tab_run, tab_results, tab_compare = st.tabs(["Prompt Lab", "Run", "Latest Results", "Compare Runs"])
+tab_prompts, tab_run, tab_results, tab_compare = st.tabs(["1. Prompt Bank", "2. Run Experiment", "3. Results", "4. Compare"])
 
 with tab_prompts:
-    st.subheader("Prompt Templates")
-    st.info(f"Prompt bank yang dipilih di sidebar: `{prompt_bank}`")
+    st.markdown(
+        f"""
+        <div class="section-title">
+          <h2>Prompt Bank Studio</h2>
+          <span class="pill">{prompt_bank}</span>
+        </div>
+        <div class="soft-card">
+        Review, edit, and preview each prompt arm before running experiments. For Online Bandit with this bank, keep <b>Notebook 68 compatible mode OFF</b>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if mode == "Online Bandit" and notebook_compatible:
         st.warning("Online Bandit sedang memakai Notebook 68 compatible mode. Dalam mode ini prompt bank/editor di bawah TIDAK dipakai; dashboard memakai prompt persis dari bandit68%.ipynb.")
     elif mode == "Online Bandit":
         st.success("Online Bandit akan memilih otomatis arm dari prompt bank ini: zero_shot, few_shot, cot, hint.")
     else:
         st.success(f"Fixed Strategy akan memakai prompt `{strategy}` dari prompt bank ini.")
-    st.write("Gunakan `{prompt}`, `{task_id}`, `{entry_point}`, dan `{hint}` sebagai placeholder.")
+    arm_cards = []
+    for arm_name in active_prompts:
+        role, desc = ARM_ROLES.get(arm_name, (arm_name, "Prompt strategy arm."))
+        arm_cards.append(
+            f"<div class='mini-card'><div class='role'>{role}</div><div class='name'>{arm_name}</div><div class='desc'>{desc}</div></div>"
+        )
+    st.markdown("<div class='mini-grid'>" + "".join(arm_cards) + "</div>", unsafe_allow_html=True)
+    st.caption("Available placeholders: `{prompt}`, `{task_id}`, `{entry_point}`, `{hint}`.")
     if st.button("Reset prompt editor to selected bank defaults", use_container_width=True):
         for prompt_name in active_prompts:
             st.session_state.pop(f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_bank}_{prompt_name}", None)
         st.rerun()
     prompt_templates = {}
-    cols = st.columns(2)
+    edit_cols = st.columns(2)
     for idx, name in enumerate(active_prompts):
-        with cols[idx % 2]:
-            prompt_templates[name] = st.text_area(
-                name,
-                active_prompts[name],
-                height=260,
-                key=f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_bank}_{name}",
-            )
-    preview_task = st.selectbox("Preview task", list(problems.keys()))
-    preview_strategy = st.selectbox("Preview strategy", list(active_prompts), key="preview_strategy")
+        role, desc = ARM_ROLES.get(name, (name, ""))
+        with edit_cols[idx % 2]:
+            with st.container(border=True):
+                st.markdown(f"**{name}**  \n<span class='pill'>{role}</span>", unsafe_allow_html=True)
+                st.caption(desc)
+                prompt_templates[name] = st.text_area(
+                    f"Template: {name}",
+                    active_prompts[name],
+                    height=280,
+                    key=f"prompt_{PROMPT_EDITOR_VERSION}_{prompt_bank}_{name}",
+                    label_visibility="collapsed",
+                )
+    st.divider()
+    st.markdown("### Prompt Preview")
+    preview_left, preview_right = st.columns([1, 1])
+    with preview_left:
+        preview_task = st.selectbox("Preview task", list(problems.keys()))
+    with preview_right:
+        preview_strategy = st.selectbox("Preview strategy", list(active_prompts), key="preview_strategy")
     st.code(build_prompt(prompt_templates[preview_strategy], problems[preview_task], use_chat_template=False), language="text")
 
 with tab_run:
-    st.subheader("Run Experiment")
     st.markdown(
         """
-        <div class="soft-card">
-        Klik tombol di bawah untuk mulai. Hasil run akan otomatis disimpan di session sehingga kamu bisa menjalankan Bandit, lalu Zero-shot, Few-shot, CoT, dan Hint, kemudian membandingkannya di tab <b>Compare Runs</b>. Logic prompt dan bandit dikembalikan ke konfigurasi notebook 68%, sementara evaluator timeout dibuat lebih aman agar tidak stuck.
+        <div class="section-title">
+          <h2>Run Experiment</h2>
+          <span class="pill">Execution Console</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="cta-card">
+        <b>Current setup:</b> {mode} with {prompt_bank}<br>
+        Preset: {experiment_preset} | Tasks: {num_tasks} x {repeats} | Notebook compatible: {bool_badge(notebook_compatible)} | Similarity memory: {bool_badge(similarity_memory)}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1136,8 +1578,8 @@ with tab_run:
         st.caption("Untuk mendekati notebook 68%: aktifkan Notebook 68 compatible mode, 164 soal, repeat 1, shuffle nonaktif, alpha 0.3, force explore 40, max_new_tokens 512, sampling off.")
         if notebook_compatible and prompt_bank != "Notebook 68 prompts":
             st.warning("Notebook 68 compatible mode sedang ON, jadi Online Bandit akan mengabaikan selected prompt bank dan memakai prompt notebook persis.")
-        if compatible_fallback or warm_start:
-            st.info("Compatible+ aktif: run ini adalah varian improvement terpisah, bukan strict reproduction dari notebook 68%.")
+        if compatible_fallback or warm_start or similarity_memory or explore_order != "Notebook order" or weak_arm_guard:
+            st.info("Compatible+/Similarity-Aware aktif: run ini adalah varian improvement terpisah, bukan strict reproduction dari notebook 68%.")
     config = {
         "mode": mode,
         "strategy": strategy,
@@ -1155,6 +1597,14 @@ with tab_run:
         "warm_start": warm_start if compatible_plus_enabled else False,
         "warm_start_run_names": warm_start_run_names if compatible_plus_enabled and warm_start else [],
         "warm_start_counts_as_exploration": warm_start_counts_as_exploration if compatible_plus_enabled else False,
+        "similarity_memory": similarity_memory if mode == "Online Bandit" else False,
+        "memory_top_k": memory_top_k if mode == "Online Bandit" and similarity_memory else 0,
+        "memory_lambda": memory_lambda if mode == "Online Bandit" and similarity_memory else 0.0,
+        "memory_threshold": memory_threshold if mode == "Online Bandit" and similarity_memory else 0.0,
+        "explore_order": explore_order if mode == "Online Bandit" else "Notebook order",
+        "weak_arm_guard": weak_arm_guard if mode == "Online Bandit" else False,
+        "weak_arm_min_samples": weak_arm_min_samples if mode == "Online Bandit" and weak_arm_guard else 0,
+        "weak_arm_margin": weak_arm_margin if mode == "Online Bandit" and weak_arm_guard else 0.0,
         "generation_timeout": generation_timeout,
         "timeout": timeout,
         "shuffle": shuffle,
@@ -1163,11 +1613,36 @@ with tab_run:
         "force_explore": force_explore,
     }
     est_generations = num_tasks * repeats
-    quick1, quick2, quick3, quick4 = st.columns(4)
-    quick1.metric("Total generations", est_generations)
-    quick2.metric("Mode", "Bandit" if mode == "Online Bandit" else "Fixed")
-    quick3.metric("Current strategy", "auto" if mode == "Online Bandit" else strategy)
-    quick4.metric("Saved runs", len(st.session_state["run_history"]))
+    run_warnings = []
+    if mode == "Online Bandit" and notebook_compatible and prompt_bank != "Notebook 68 prompts":
+        run_warnings.append("Notebook compatible ON will ignore the selected prompt bank.")
+    if experiment_preset == "Thesis full run" and num_tasks < min(164, len(problems)):
+        run_warnings.append("Thesis full run usually needs 164 tasks.")
+    st.markdown(
+        f"""
+        <div class="status-grid">
+          <div class="status-card card-blue"><div class="label">Generations</div><div class="value">{est_generations}</div><div class="hint">{num_tasks} tasks x {repeats} repeat</div></div>
+          <div class="status-card card-green"><div class="label">Mode</div><div class="value">{'Bandit' if mode == 'Online Bandit' else 'Fixed'}</div><div class="hint">{'Automatic arm selection' if mode == 'Online Bandit' else strategy}</div></div>
+          <div class="status-card card-violet"><div class="label">Prompt Bank</div><div class="value">{prompt_bank.split()[0]}</div><div class="hint">{prompt_bank}</div></div>
+          <div class="status-card card-amber"><div class="label">Policy</div><div class="value">{bool_badge(similarity_memory)}</div><div class="hint">Similarity memory</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if run_warnings:
+        for warning in run_warnings:
+            st.warning(warning)
+    else:
+        st.success("Setup looks consistent. You can start the experiment when ready.")
+    with st.expander("Recommended run order", expanded=False):
+        st.markdown(
+            """
+            1. Run Fixed Strategy untuk `zero_shot`, `few_shot`, `cot`, dan `hint` dengan `Problem-type aware prompts`.
+            2. Run Online Bandit dengan Similarity memory dan Weak-arm guard ON.
+            3. Bandingkan dengan strict notebook baseline di tab Compare.
+            4. Jika fixed CoT tetap paling tinggi, laporkan RL-APO sebagai stabilizer/context selector dan analisis kapan arm lain dipilih.
+            """
+        )
     if st.button("Start Experiment", type="primary", use_container_width=True):
         df_result = run_experiment(config, prompt_templates, problems)
         run_name = make_run_name(config, st.session_state["run_started_at"])
@@ -1210,24 +1685,41 @@ with tab_results:
         passed_count = int(df["passed"].sum())
         total_runtime = float(df["task_seconds"].sum())
         avg_task_seconds = float(df["task_seconds"].mean()) if len(df) else 0.0
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-        col1.metric("Pass@1", f"{pass_at_1:.1f}%")
-        col2.metric("Avg Reward", f"{avg_reward:.3f}")
-        col3.metric("Compile OK", f"{compile_rate:.1f}%")
-        col4.metric("Passed", f"{passed_count}/{total}")
-        col5.metric("Fail Rate", f"{fail_rate:.1f}%")
-        col6.metric("Runtime", f"{total_runtime/60:.1f}m", f"{avg_task_seconds:.1f}s/task")
-
+        st.markdown(
+            f"""
+            <div class="status-grid">
+              <div class="status-card card-blue"><div class="label">Pass@1</div><div class="value">{pass_at_1:.1f}%</div><div class="hint">{passed_count}/{total} tasks passed</div></div>
+              <div class="status-card card-green"><div class="label">Compile OK</div><div class="value">{compile_rate:.1f}%</div><div class="hint">Executable candidates</div></div>
+              <div class="status-card card-violet"><div class="label">Avg Reward</div><div class="value">{avg_reward:.3f}</div><div class="hint">Reward: 1.0 / 0.3 / 0.0</div></div>
+              <div class="status-card card-amber"><div class="label">Runtime</div><div class="value">{total_runtime/60:.1f}m</div><div class="hint">{avg_task_seconds:.1f}s per task</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.divider()
         left, right = st.columns(2)
         with left:
             st.subheader("Pass@1 by Strategy")
             strategy_pass = (df.groupby("strategy")["passed"].mean() * 100).sort_values(ascending=False)
-            st.bar_chart(strategy_pass)
+            strategy_pass_df = strategy_pass.reset_index().rename(columns={"passed": "pass_at_1"})
+            pass_chart = alt.Chart(strategy_pass_df).mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6).encode(
+                x=alt.X("strategy:N", title="Prompt strategy", sort="-y"),
+                y=alt.Y("pass_at_1:Q", title="Pass@1 (%)", scale=alt.Scale(domain=[0, 100])),
+                color=alt.Color("strategy:N", legend=None),
+                tooltip=["strategy:N", alt.Tooltip("pass_at_1:Q", format=".2f")],
+            ).properties(height=320)
+            st.altair_chart(pass_chart, use_container_width=True)
         with right:
             st.subheader("Strategy Usage")
             usage = pd.Series(dict(Counter(df["strategy"]))).sort_values(ascending=False)
-            st.bar_chart(usage)
+            usage_df = usage.reset_index()
+            usage_df.columns = ["strategy", "count"]
+            usage_chart = alt.Chart(usage_df).mark_arc(innerRadius=58, outerRadius=118).encode(
+                theta=alt.Theta("count:Q"),
+                color=alt.Color("strategy:N", title="Strategy"),
+                tooltip=["strategy:N", "count:Q"],
+            ).properties(height=320)
+            st.altair_chart(usage_chart, use_container_width=True)
 
         st.subheader("Detailed Metrics")
         summary = df.groupby("strategy").agg(
@@ -1240,6 +1732,51 @@ with tab_results:
             avg_completion_chars=("completion_chars", "mean"),
         ).reset_index()
         st.dataframe(summary, use_container_width=True)
+        run_summary_export = pd.DataFrame([{
+            "run_name": selected_record["name"] if selected_record else "latest_results",
+            "pass_at_1": pass_at_1,
+            "compile_rate": compile_rate,
+            "avg_reward": avg_reward,
+            "passed": passed_count,
+            "total": total,
+            "fail_rate": fail_rate,
+            "runtime_min": total_runtime / 60.0,
+            "avg_task_seconds": avg_task_seconds,
+        }])
+        thesis_metrics = summary.copy()
+        for col in ["pass_at_1", "compile_rate", "avg_reward", "avg_task_seconds", "avg_eval_seconds", "avg_completion_chars"]:
+            if col in thesis_metrics:
+                thesis_metrics[col] = thesis_metrics[col].round(3)
+        with st.expander("Download thesis-ready outputs for this run", expanded=False):
+            export_cols = st.columns(4)
+            export_cols[0].download_button(
+                "Run summary CSV",
+                run_summary_export.to_csv(index=False).encode("utf-8"),
+                safe_download_name(selected_record["name"] if selected_record else "latest", "_summary.csv"),
+                "text/csv",
+                use_container_width=True,
+            )
+            export_cols[1].download_button(
+                "Strategy metrics CSV",
+                thesis_metrics.to_csv(index=False).encode("utf-8"),
+                safe_download_name(selected_record["name"] if selected_record else "latest", "_strategy_metrics.csv"),
+                "text/csv",
+                use_container_width=True,
+            )
+            export_cols[2].download_button(
+                "Markdown table",
+                df_to_markdown_table(thesis_metrics).encode("utf-8"),
+                safe_download_name(selected_record["name"] if selected_record else "latest", "_strategy_metrics.md"),
+                "text/markdown",
+                use_container_width=True,
+            )
+            export_cols[3].download_button(
+                "LaTeX table",
+                df_to_latex_table(thesis_metrics, "Per-strategy performance on HumanEval.", "tab:strategy-performance").encode("utf-8"),
+                safe_download_name(selected_record["name"] if selected_record else "latest", "_strategy_metrics.tex"),
+                "text/plain",
+                use_container_width=True,
+            )
 
         st.subheader("Task Explorer")
         filter_left, filter_mid, filter_right = st.columns([1.1, 1, 1])
@@ -1259,7 +1796,11 @@ with tab_results:
         if search_task:
             visible = visible[visible["task_id"].str.contains(search_task, case=False, regex=False)]
 
-        compact_cols = ["repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "extraction_method", "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error"]
+        compact_cols = [
+            "repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "extraction_method",
+            "linucb_score", "memory_score", "combined_score", "best_similarity", "nearest_examples",
+            "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error",
+        ]
         compact_cols = [col for col in compact_cols if col in visible.columns]
         st.dataframe(visible[compact_cols], use_container_width=True, height=360)
         with st.expander("Show full raw results including prompts and completions", expanded=False):
@@ -1271,7 +1812,18 @@ with tab_results:
         dl2.download_button("Download selected run JSONL", jsonl, "experiment_results.jsonl", "application/jsonl", use_container_width=True)
 
 with tab_compare:
-    st.subheader("Compare Saved Runs")
+    st.markdown(
+        """
+        <div class="section-title">
+          <h2>Comparison Board</h2>
+          <span class="pill">Thesis View</span>
+        </div>
+        <div class="soft-card">
+        Rank runs by Pass@1, inspect compile rate and reward trade-offs, then export chart data and LaTeX-ready tables for your thesis document.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     history = st.session_state["run_history"]
     if not history:
         st.info("Belum ada saved run. Jalankan Bandit atau fixed strategy dari tab Run, lalu kembali ke sini.")
@@ -1291,19 +1843,55 @@ with tab_compare:
             "compatible_fallback": False,
             "warm_start": False,
             "warm_start_examples": 0,
+            "similarity_memory": False,
+            "memory_top_k": 0,
+            "memory_lambda": 0.0,
+            "memory_threshold": 0.0,
+            "explore_order": "Notebook order",
+            "weak_arm_guard": False,
+            "weak_arm_min_samples": 0,
+            "weak_arm_margin": 0.0,
             "prompt_bank": "Notebook 68 prompts",
         }
         for col, default in defaults.items():
             if col not in summary_df.columns:
                 summary_df[col] = default
         summary_df = summary_df.sort_values("pass_at_1", ascending=False).reset_index(drop=True)
+        summary_df["display_name"] = summary_df.apply(
+            lambda row: f"{row['strategy']} | {row['pass_at_1']:.1f}% | {row['prompt_bank']}",
+            axis=1,
+        )
+        selected_compare_names = st.multiselect(
+            "Runs shown in dashboard charts",
+            summary_df["run_name"].tolist(),
+            default=summary_df["run_name"].tolist(),
+            help="Filter visual charts without deleting saved runs.",
+        )
+        if selected_compare_names:
+            summary_df = summary_df[summary_df["run_name"].isin(selected_compare_names)].reset_index(drop=True)
+        if summary_df.empty:
+            st.warning("No runs selected for comparison.")
+            st.stop()
         best = summary_df.iloc[0]
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Best run", best["strategy"])
-        c2.metric("Best Pass@1", f"{best['pass_at_1']:.1f}%")
-        c3.metric("Best Avg Reward", f"{best['avg_reward']:.3f}")
-        c4.metric("Best Runtime", f"{best['total_seconds']/60:.1f}m")
-        c5.metric("Saved runs", len(history))
+        runner_up = summary_df.iloc[1] if len(summary_df) > 1 else best
+        gain = float(best["pass_at_1"] - runner_up["pass_at_1"]) if len(summary_df) > 1 else 0.0
+        st.markdown(
+            f"""
+            <div class="status-grid">
+              <div class="status-card card-blue"><div class="label">Best Pass@1</div><div class="value">{best['pass_at_1']:.1f}%</div><div class="hint">{best['run_name']}</div></div>
+              <div class="status-card card-green"><div class="label">Best Reward</div><div class="value">{best['avg_reward']:.3f}</div><div class="hint">Average execution reward</div></div>
+              <div class="status-card card-violet"><div class="label">Lead Margin</div><div class="value">+{gain:.1f}</div><div class="hint">points over rank #2</div></div>
+              <div class="status-card card-amber"><div class="label">Compared Runs</div><div class="value">{len(summary_df)}</div><div class="hint">of {len(history)} saved runs</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        podium_cards = []
+        for rank, (_, row) in enumerate(summary_df.head(3).iterrows(), start=1):
+            podium_cards.append(
+                f"<div class='mini-card'><div class='role'>Rank #{rank}</div><div class='name'>{row['strategy']} - {row['pass_at_1']:.1f}%</div><div class='desc'>{row['prompt_bank']}<br>{int(row['passed'])}/{int(row['generations'])} passed | reward {row['avg_reward']:.3f}</div></div>"
+            )
+        st.markdown("<div class='mini-grid'>" + "".join(podium_cards) + "</div>", unsafe_allow_html=True)
 
         with st.expander("Manage leaderboard runs", expanded=False):
             runs_to_delete = st.multiselect(
@@ -1349,38 +1937,63 @@ with tab_compare:
             "compatible_fallback",
             "warm_start",
             "warm_start_examples",
+            "similarity_memory",
+            "memory_top_k",
+            "memory_lambda",
+            "memory_threshold",
+            "explore_order",
+            "weak_arm_guard",
+            "weak_arm_min_samples",
+            "weak_arm_margin",
         ]
         st.dataframe(summary_df[display_cols], use_container_width=True, height=300)
         st.caption("CI menggunakan normal approximation 95%. Untuk laporan thesis/jurnal, gunakan run 164 task penuh dan setting yang konsisten.")
+        thesis_cols = [
+            "run_name", "strategy", "prompt_bank", "generations", "passed", "failed",
+            "pass_at_1", "compile_rate", "avg_reward", "runtime_min",
+            "notebook_compatible", "similarity_memory", "weak_arm_guard",
+        ]
+        thesis_cols = [col for col in thesis_cols if col in summary_df.columns]
+        thesis_summary_df = summary_df[thesis_cols].copy()
+        for col in ["pass_at_1", "compile_rate", "avg_reward", "runtime_min"]:
+            if col in thesis_summary_df:
+                thesis_summary_df[col] = thesis_summary_df[col].round(3)
 
-        st.subheader("Metric Comparison")
+        st.markdown("### Metric Comparison")
         plot_df = summary_df.copy()
-        plot_df["method"] = plot_df["strategy"].replace({"bandit": "Online Bandit"})
+        plot_df["method"] = plot_df["display_name"]
         duplicated_methods = plot_df["method"].duplicated(keep=False)
         plot_df.loc[duplicated_methods, "method"] = (
             plot_df.loc[duplicated_methods, "method"] + " #" + (plot_df.groupby("method").cumcount() + 1).astype(str)
         )
+        rank_chart = alt.Chart(plot_df).mark_bar(cornerRadiusTopRight=8, cornerRadiusBottomRight=8).encode(
+            y=alt.Y("method:N", title="Run", sort="-x", axis=alt.Axis(labelLimit=260)),
+            x=alt.X("pass_at_1:Q", title="Pass@1 (%)", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("prompt_bank:N", title="Prompt bank"),
+            tooltip=["run_name:N", alt.Tooltip("pass_at_1:Q", format=".2f"), alt.Tooltip("compile_rate:Q", format=".2f"), alt.Tooltip("avg_reward:Q", format=".3f")],
+        ).properties(height=max(300, 44 * len(plot_df)))
+        st.altair_chart(rank_chart, use_container_width=True)
         accuracy_chart = plot_df.set_index("method")[["pass_at_1", "compile_rate"]].rename(columns={
             "pass_at_1": "Pass@1 (%)",
             "compile_rate": "Compile OK (%)",
         })
         accuracy_chart["Avg Reward (x100)"] = plot_df.set_index("method")["avg_reward"] * 100
         chart_long = accuracy_chart.reset_index().melt("method", var_name="metric", value_name="value")
-        metric_chart = alt.Chart(chart_long).mark_bar().encode(
-            x=alt.X("method:N", title="Method / Prompt", sort=None, axis=alt.Axis(labelAngle=-35)),
+        metric_chart = alt.Chart(chart_long).mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6).encode(
+            x=alt.X("method:N", title="Method / Prompt", sort=None, axis=alt.Axis(labelAngle=-25, labelLimit=180)),
             xOffset=alt.XOffset("metric:N"),
             y=alt.Y("value:Q", title="Score", scale=alt.Scale(domain=[0, 100])),
-            color=alt.Color("metric:N", title="Metric"),
+            color=alt.Color("metric:N", title="Metric", scale=alt.Scale(range=["#2563eb", "#16a34a", "#7c3aed"])),
             tooltip=["method:N", "metric:N", alt.Tooltip("value:Q", format=".2f")],
         ).properties(height=420)
         st.caption("Vertical grouped bar chart. Higher is better. Runtime tetap tersedia di leaderboard table.")
         st.altair_chart(metric_chart, use_container_width=True)
 
-        st.subheader("Strategy Comparison")
+        st.markdown("### Task-Level Agreement")
         selected_runs = st.multiselect(
             "Runs to compare by task",
-            [item["name"] for item in history],
-            default=[item["name"] for item in history[-min(len(history), 3):]],
+            selected_compare_names or [item["name"] for item in history],
+            default=(selected_compare_names or [item["name"] for item in history])[: min(len(selected_compare_names or history), 3)],
         )
         if selected_runs:
             merged_rows = []
@@ -1392,7 +2005,16 @@ with tab_compare:
                 merged_rows.append(tmp)
             compare_df = pd.concat(merged_rows, ignore_index=True) if merged_rows else pd.DataFrame()
             pivot = compare_df.pivot_table(index="task_id", columns="run_name", values="passed", aggfunc="max")
-            st.dataframe(pivot, use_container_width=True, height=420)
+            pass_counts = compare_df.groupby("task_id")["passed"].sum().reset_index(name="passed_runs")
+            agreement_chart = alt.Chart(pass_counts).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                x=alt.X("passed_runs:O", title="Number of selected runs that passed a task"),
+                y=alt.Y("count():Q", title="Task count"),
+                color=alt.Color("passed_runs:O", legend=None, scale=alt.Scale(range=["#dc2626", "#f97316", "#eab308", "#22c55e", "#16a34a", "#15803d"])),
+                tooltip=["passed_runs:O", alt.Tooltip("count():Q", title="tasks")],
+            ).properties(height=260)
+            st.altair_chart(agreement_chart, use_container_width=True)
+            with st.expander("Task pass/fail matrix", expanded=False):
+                st.dataframe(pivot, use_container_width=True, height=420)
 
             if len(selected_runs) >= 2:
                 st.subheader("Pairwise Task-Level Comparison")
@@ -1421,7 +2043,12 @@ with tab_compare:
                         })
                 st.dataframe(pd.DataFrame(pair_rows), use_container_width=True, height=260)
 
-        all_csv = summary_df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download comparison CSV", all_csv, "run_comparison.csv", "text/csv", use_container_width=True)
+        with st.expander("Download thesis-ready comparison package", expanded=True):
+            dl_a, dl_b, dl_c, dl_d = st.columns(4)
+            dl_a.download_button("Leaderboard CSV", summary_df.to_csv(index=False).encode("utf-8"), "run_comparison_full.csv", "text/csv", use_container_width=True)
+            dl_b.download_button("Chart data CSV", chart_long.to_csv(index=False).encode("utf-8"), "metric_chart_data.csv", "text/csv", use_container_width=True)
+            dl_c.download_button("Markdown table", df_to_markdown_table(thesis_summary_df).encode("utf-8"), "thesis_comparison_table.md", "text/markdown", use_container_width=True)
+            dl_d.download_button("LaTeX table", df_to_latex_table(thesis_summary_df, "Comparison of RL-APO prompting strategies on HumanEval.", "tab:rl-apo-comparison").encode("utf-8"), "thesis_comparison_table.tex", "text/plain", use_container_width=True)
+            st.caption("Gunakan CSV untuk chart ulang di Excel/Sheets, Markdown untuk draft docs, dan LaTeX table untuk proposal/thesis.")
         history_json = RUN_HISTORY_FILE.read_bytes() if RUN_HISTORY_FILE.exists() else json.dumps([], indent=2).encode("utf-8")
         st.download_button("Download full run history JSON", history_json, "streamlit_run_history.json", "application/json", use_container_width=True)
