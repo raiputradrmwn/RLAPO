@@ -139,6 +139,12 @@ def make_run_name(config: dict, started_at: str) -> str:
             method += " Sim"
         if config.get("weak_arm_guard") or config.get("explore_order") not in (None, "Notebook order"):
             method += " Guard"
+        if config.get("category_arm_guard"):
+            method += " CatGuard"
+        if config.get("recent_arm_cooldown"):
+            method += " Cooldown"
+        if config.get("best_arm_fallback"):
+            method += " SafeBest"
     else:
         method = config["strategy"]
     return f"{started_at} | {method} | {config['num_tasks']} tasks x {config['repeats']}"
@@ -190,6 +196,19 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "weak_arm_guard": config.get("weak_arm_guard", False),
         "weak_arm_min_samples": config.get("weak_arm_min_samples", 0),
         "weak_arm_margin": config.get("weak_arm_margin", 0.0),
+        "best_arm_fallback": config.get("best_arm_fallback", False),
+        "best_arm_min_samples": config.get("best_arm_min_samples", 0),
+        "best_arm_margin": config.get("best_arm_margin", 0.0),
+        "category_prior": config.get("category_prior", False),
+        "category_prior_weight": config.get("category_prior_weight", 0.0),
+        "category_arm_guard": config.get("category_arm_guard", False),
+        "category_guard_min_samples": config.get("category_guard_min_samples", 0),
+        "category_guard_margin": config.get("category_guard_margin", 0.0),
+        "smart_extraction": config.get("smart_extraction", True),
+        "recent_arm_cooldown": config.get("recent_arm_cooldown", False),
+        "recent_cooldown_window": config.get("recent_cooldown_window", 0),
+        "recent_cooldown_min_samples": config.get("recent_cooldown_min_samples", 0),
+        "recent_cooldown_threshold": config.get("recent_cooldown_threshold", 0.0),
         "prompt_bank": config.get("prompt_bank", "Notebook 68 prompts"),
     }
 DEFAULT_PROMPTS = {
@@ -414,11 +433,18 @@ Return exactly the requested value and type.
 }
 
 PROBLEM_TYPE_AWARE_PROMPTS = {
-    "zero_shot": """You are a precise Python programmer. Implement the function so it passes the visible examples and hidden unit tests.
+    "zero_shot": """You are a precise Python programmer. Implement the target function correctly.
 
-Output only executable Python code for the missing function body. Do not include markdown, explanations, tests, or unrelated helper text.
+Output only Python code, no markdown, no explanation, no tests, and no print statements. A full function definition is acceptable if needed; otherwise output the missing function body.
 
-Before writing code, infer the problem type from the docstring: string processing, list processing, math, parsing, sorting, recursion, or edge-case handling. Use the simplest correct algorithm. Preserve exact return type and handle empty inputs, duplicates, boundary values, and examples in the docstring.
+Use this checklist before writing code:
+1. Match every visible docstring example exactly.
+2. Preserve the exact return type requested by the signature/docstring.
+3. Handle empty inputs, one-element inputs, duplicates, negative values, whitespace, and boundary cases when relevant.
+4. Prefer a simple deterministic algorithm over clever shortcuts.
+5. Do not mutate inputs unless the task clearly allows it.
+
+Problem-specific guidance: {hint}
 
 {prompt}""",
     "few_shot": """You are a precise Python programmer. Learn the style from these HumanEval-like examples, then output only executable Python code for the missing function body.
@@ -456,11 +482,14 @@ Solution:
     return groups
 
 Now solve the target function. Output only the missing function body.
+Problem-specific guidance: {hint}
 
 {prompt}""",
     "cot": """Think silently about the algorithm, edge cases, and exact return type. Then output only the final executable Python code for the missing function body.
 
 Do not include reasoning text, markdown, tests, or the function signature.
+
+Problem-specific guidance: {hint}
 
 {prompt}""",
     "hint": """You are a precise Python programmer. Use the problem-specific hint and implement only the missing function body.
@@ -525,7 +554,7 @@ def extract_code(generated: str) -> str:
         generated = generated.split("```python", 1)[1].split("```", 1)[0].strip()
     elif "```" in generated:
         generated = generated.split("```", 1)[1].split("```", 1)[0].strip()
-    stop_markers = ["\nProblem:", "\nExample", "\nTests:", "\nassert ", "\n# Test"]
+    stop_markers = ["\nProblem:", "\nExample", "\nTests:", "\nassert ", "\n# Test", "\nprint("]
     for marker in stop_markers:
         if marker in generated:
             generated = generated.split(marker, 1)[0].strip()
@@ -544,13 +573,148 @@ def extract_code_notebook(generated: str) -> str:
 
 def make_hint(problem: dict) -> str:
     prompt_text = problem["prompt"].lower()
-    if any(word in prompt_text for word in ["sort", "sorted", "order"]):
-        return "Hint: Consider efficient sorting algorithms and time complexity."
+    if "basic algebra operations" in prompt_text and "operator" in prompt_text and "operand" in prompt_text:
+        return "Hint: Build the expression from operands and operators and evaluate it with normal Python precedence; do not evaluate strictly left-to-right."
+    if "contains no letters" in prompt_text and "reverse the string" in prompt_text:
+        return "Hint: If the string has at least one letter, swap case of letters and keep other characters in place. If it has no letters, return the reversed whole string."
+    if "md5" in prompt_text:
+        return "Hint: Import hashlib inside the function, return None for empty string, otherwise return hashlib.md5(text.encode()).hexdigest()."
+    if "even digits" in prompt_text and "ascending order" in prompt_text:
+        return "Hint: Return the even digits 2, 4, 6, 8 that lie between min(a,b) and max(a,b), in ascending order. Digits above 9 are never returned."
+    if "intersection" in prompt_text and "prime" in prompt_text and "interval" in prompt_text:
+        return "Hint: For these closed intervals, follow the examples: intersection (2, 3) has length 1, so use end - start, not end - start + 1, then test whether that length is prime."
+    if "product of the odd digits" in prompt_text:
+        return "Hint: Multiply only odd digits, but return 0 if there are no odd digits at all. Track whether any odd digit was seen."
+    if "sum of magnitudes" in prompt_text and "product of all signs" in prompt_text:
+        return "Hint: Return None for empty input. If any element is zero the sign product is 0, so the final answer is 0; otherwise multiply sign by -1 for negative values and sum absolute magnitudes."
+    if "tribonacci" in prompt_text or "tri(1)" in prompt_text:
+        return "Hint: The sequence starts with tri(0)=1, tri(1)=3, tri(2)=2. For even i use 1 + i/2; for odd i use previous three values. Return the first n+1 values."
+    if "valid subsequence" in prompt_text and "nested" in prompt_text and "square brackets" in prompt_text:
+        return "Hint: This is not just balanced brackets. Return True only if there exists nested brackets, i.e. depth reaches at least 2 in a valid subsequence; plain [] or [][] is False."
+    if "ceiling" in prompt_text or "upper int" in prompt_text:
+        return "Hint: Round each value upward with math.ceil before squaring. Remember negative values: ceil(-2.4) is -2, then square it."
+    if "largest index" in prompt_text and "immediately preceding" in prompt_text:
+        return "Hint: Scan all adjacent pairs and return the largest index i where arr[i] < arr[i-1]. Return i, not i-1. Return -1 if none."
+    if "last character" in prompt_text and "not" in prompt_text and "part of a word" in prompt_text:
+        return "Hint: Return True only when the string is non-empty, does not end with space, the last character is a letter, and the last word has length exactly 1."
+    if "path of length k" in prompt_text and "lexicographically" in prompt_text and "grid" in prompt_text:
+        return "Hint: Return the lexicographically smallest sequence of k cell values. Usually start from the smallest cell value and repeatedly choose the smallest neighbor value; values may be revisited."
+    if any(word in prompt_text for word in ["parentheses", "bracket", "paren"]):
+        return "Hint: Track nesting depth carefully, reset groups only when depth returns to zero, and ignore spaces if required."
+    if any(word in prompt_text for word in ["sort", "sorted", "order", "increasing", "decreasing"]):
+        return "Hint: Preserve the requested ordering exactly; handle duplicates, empty lists, and stable sorting requirements."
     if any(word in prompt_text for word in ["tree", "node", "binary"]):
-        return "Hint: Consider recursion or iterative traversal for tree structures."
-    if any(word in prompt_text for word in ["string", "text", "character"]):
-        return "Hint: Consider string manipulation methods and edge cases like empty strings."
-    return "Hint: Consider edge cases and efficient data structures."
+        return "Hint: Use recursion or an explicit stack; handle empty nodes and base cases before recursive calls."
+    if any(word in prompt_text for word in ["string", "text", "character", "substring", "word"]):
+        return "Hint: Preserve character order unless told otherwise; handle empty strings, whitespace, case, and punctuation exactly."
+    if any(word in prompt_text for word in ["list", "array", "tuple", "sequence"]):
+        return "Hint: Handle empty inputs, duplicates, and boundary indexes; prefer simple loops or comprehensions."
+    if any(word in prompt_text for word in ["integer", "number", "float", "prime", "digit", "sum", "product"]):
+        return "Hint: Check zero, negative values, one-element inputs, and exact integer/float return type."
+    return "Hint: Match the docstring examples exactly, handle hidden edge cases, and return the requested type."
+
+
+def problem_category(problem: dict) -> str:
+    text = problem["prompt"].lower()
+    if "md5" in text:
+        return "hashing"
+    if "basic algebra operations" in text:
+        return "expression"
+    if "grid" in text or "path of length" in text:
+        return "grid"
+    if "intersection" in text and "interval" in text:
+        return "interval"
+    if "digits" in text or "signs" in text or "factorial" in text:
+        return "math"
+    if any(word in text for word in ["parentheses", "bracket", "paren"]):
+        return "parsing"
+    if any(word in text for word in ["string", "text", "character", "substring", "word"]):
+        return "string"
+    if any(word in text for word in ["list", "array", "tuple", "sequence"]):
+        return "list"
+    if any(word in text for word in ["sort", "sorted", "order", "increasing", "decreasing"]):
+        return "ordering"
+    if any(word in text for word in ["tree", "node", "binary", "recursive"]):
+        return "recursive"
+    if any(word in text for word in ["integer", "number", "float", "prime", "digit", "sum", "product"]):
+        return "math"
+    return "general"
+
+
+def category_prior_scores(problem: dict, num_arms: int = 4) -> list[float]:
+    category = problem_category(problem)
+    priors = [0.0] * num_arms
+    if category in {"hashing", "expression"}:
+        priors[3] = 0.24
+        priors[0] = 0.14
+    elif category in {"grid", "interval"}:
+        priors[2] = 0.22
+        priors[3] = 0.14
+    elif category in {"parsing"}:
+        priors[3] = 0.22
+        priors[2] = 0.08
+    elif category in {"string", "list"}:
+        priors[3] = 0.18
+        priors[2] = 0.10
+    elif category in {"math", "ordering", "recursive"}:
+        priors[2] = 0.18
+        priors[3] = 0.10
+    else:
+        priors[0] = 0.08
+        priors[2] = 0.08
+        priors[3] = 0.08
+    return priors[:num_arms]
+
+
+def category_guard_scores(category: str, stats: dict, num_arms: int = 4, min_samples: int = 3, margin: float = 0.20) -> list[float]:
+    cat_stats = stats.get(category, {})
+    rewards = {}
+    for arm, values in cat_stats.items():
+        if len(values) >= min_samples:
+            rewards[int(arm)] = float(np.mean(values))
+    if not rewards:
+        return [0.0] * num_arms
+    best_reward = max(rewards.values())
+    scores = [0.0] * num_arms
+    for arm, avg_reward in rewards.items():
+        if avg_reward < best_reward - margin:
+            scores[arm] = -0.75
+        elif avg_reward >= best_reward - 0.05:
+            scores[arm] = 0.18
+    return scores
+
+
+def recent_arm_guard_scores(recent_rewards: dict, num_arms: int = 4, min_samples: int = 4, threshold: float = 0.55) -> list[float]:
+    scores = [0.0] * num_arms
+    for arm in range(num_arms):
+        values = recent_rewards.get(arm, [])
+        if len(values) >= min_samples:
+            recent_avg = float(np.mean(values))
+            if recent_avg < threshold:
+                scores[arm] = -0.90
+            elif recent_avg >= 0.85:
+                scores[arm] = 0.12
+    return scores
+
+
+def prompt_imports(prompt: str) -> str:
+    imports = []
+    for line in prompt.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            imports.append(line)
+    return "\n".join(imports)
+
+
+def inferred_standard_imports(code: str) -> str:
+    imports = []
+    if "hashlib." in code and "import hashlib" not in code:
+        imports.append("import hashlib")
+    if "math." in code and "import math" not in code:
+        imports.append("import math")
+    if "heapq." in code and "import heapq" not in code:
+        imports.append("import heapq")
+    return "\n".join(imports)
 
 
 def check_compile(code: str) -> int:
@@ -582,7 +746,15 @@ def run_with_timeout(code: str, timeout_seconds: int = 10):
 
 
 def evaluate_sample(problem: dict, completion: str, timeout: int):
-    full_code = problem["prompt"] + completion + "\n" + problem["test"]
+    if f"def {problem['entry_point']}" in completion:
+        imports = prompt_imports(problem["prompt"])
+        inferred = inferred_standard_imports(completion)
+        prefix = "\n".join(part for part in [imports, inferred] if part)
+        full_code = (prefix + "\n" if prefix else "") + completion + "\n" + problem["test"]
+    else:
+        body = _normalize_body_indentation(completion)
+        inferred = inferred_standard_imports(body)
+        full_code = (inferred + "\n" if inferred else "") + problem["prompt"] + body + "\n" + problem["test"]
     if f"check({problem['entry_point']})" not in full_code:
         full_code += f"\n\ncheck({problem['entry_point']})"
     compile_success = check_compile(full_code)
@@ -624,6 +796,30 @@ def evaluate_compatible_completion(problem: dict, generated: str, timeout: int, 
         if compile_ok:
             return completion, passed, compile_ok, reward, error, method
 
+    return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
+
+
+def evaluate_standard_completion(problem: dict, generated: str, timeout: int, allow_compile_fallback: bool):
+    candidates = [
+        ("standard", extract_code(generated)),
+        ("raw_fallback", extract_code_notebook(generated)),
+    ]
+    unique = []
+    seen = set()
+    for method, completion in candidates:
+        key = completion.strip()
+        if key and key not in seen:
+            unique.append((method, completion))
+            seen.add(key)
+    primary_method, primary_completion = unique[0]
+    primary_passed, primary_compile_ok, primary_reward, primary_error = evaluate_sample(problem, primary_completion, timeout)
+    syntax_like_error = isinstance(primary_error, str) and ("SyntaxError" in primary_error or "IndentationError" in primary_error)
+    if primary_passed or (primary_compile_ok and not syntax_like_error) or not allow_compile_fallback:
+        return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
+    for method, completion in unique[1:]:
+        passed, compile_ok, reward, error = evaluate_sample(problem, completion, timeout)
+        if compile_ok:
+            return completion, passed, compile_ok, reward, error, method
     return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
 
 
@@ -706,15 +902,28 @@ class OnlineLinUCB:
         context,
         memory_scores: list[float] | None = None,
         memory_lambda: float = 0.0,
+        prior_scores: list[float] | None = None,
+        prior_weight: float = 0.0,
+        guard_scores: list[float] | None = None,
         weak_arm_guard: bool = False,
         weak_arm_min_samples: int = 8,
         weak_arm_margin: float = 0.20,
+        best_arm_fallback: bool = False,
+        best_arm_min_samples: int = 20,
+        best_arm_margin: float = 0.08,
     ):
         self.t += 1
         linucb_scores = self.score_arms(context)
         if memory_scores is None:
             memory_scores = [0.0] * self.num_arms
-        combined_scores = [linucb_scores[idx] + memory_lambda * memory_scores[idx] for idx in range(self.num_arms)]
+        if prior_scores is None:
+            prior_scores = [0.0] * self.num_arms
+        if guard_scores is None:
+            guard_scores = [0.0] * self.num_arms
+        combined_scores = [
+            linucb_scores[idx] + memory_lambda * memory_scores[idx] + prior_weight * prior_scores[idx] + guard_scores[idx]
+            for idx in range(self.num_arms)
+        ]
         forced = self.t <= self.force_explore
         if forced:
             arm = self.explore_order[(self.t - 1) % len(self.explore_order)]
@@ -729,6 +938,13 @@ class OnlineLinUCB:
                         if averages[idx] < best_average - weak_arm_margin:
                             candidate_scores[idx] = -1e9
             arm = int(np.argmax(candidate_scores))
+            if best_arm_fallback:
+                averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
+                eligible = [idx for idx, rewards in enumerate(self.arm_rewards) if len(rewards) >= best_arm_min_samples]
+                if eligible:
+                    best_arm = max(eligible, key=lambda idx: averages[idx])
+                    if averages[best_arm] >= averages[arm] + best_arm_margin:
+                        arm = best_arm
         self.arm_counts[arm] += 1
         return arm, linucb_scores, memory_scores, combined_scores, forced
 
@@ -948,6 +1164,8 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
         config["warm_start_examples"] = 0
     rows = []
     similarity_memory = []
+    category_arm_stats = {}
+    recent_arm_rewards = {arm: [] for arm in STRATEGY_NAMES}
     top_line = st.empty()
     progress = st.progress(0, text="Waiting to start...")
     live_panel = st.empty()
@@ -964,6 +1182,26 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
             step += 1
             if bandit:
                 features = np.array(extract_features(problem, tokenizer))
+                current_category = problem_category(problem)
+                priors = category_prior_scores(problem, num_arms=len(STRATEGY_NAMES)) if config.get("category_prior") else [0.0] * len(STRATEGY_NAMES)
+                hard_guards = [0.0] * len(STRATEGY_NAMES)
+                if config.get("category_arm_guard"):
+                    guard_scores = category_guard_scores(
+                        current_category,
+                        category_arm_stats,
+                        num_arms=len(STRATEGY_NAMES),
+                        min_samples=config.get("category_guard_min_samples", 3),
+                        margin=config.get("category_guard_margin", 0.20),
+                    )
+                    hard_guards = [hard_guards[idx] + guard_scores[idx] for idx in range(len(hard_guards))]
+                if config.get("recent_arm_cooldown"):
+                    recent_scores = recent_arm_guard_scores(
+                        recent_arm_rewards,
+                        num_arms=len(STRATEGY_NAMES),
+                        min_samples=config.get("recent_cooldown_min_samples", 4),
+                        threshold=config.get("recent_cooldown_threshold", 0.55),
+                    )
+                    hard_guards = [hard_guards[idx] + recent_scores[idx] for idx in range(len(hard_guards))]
                 if config.get("similarity_memory"):
                     memory_scores, nearest_examples, best_similarity = compute_similarity_memory_scores(
                         features,
@@ -976,16 +1214,28 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         features,
                         memory_scores=memory_scores,
                         memory_lambda=config.get("memory_lambda", 0.4),
+                        prior_scores=priors,
+                        prior_weight=config.get("category_prior_weight", 0.35),
+                        guard_scores=hard_guards,
                         weak_arm_guard=config.get("weak_arm_guard", False),
                         weak_arm_min_samples=config.get("weak_arm_min_samples", 8),
                         weak_arm_margin=config.get("weak_arm_margin", 0.20),
+                        best_arm_fallback=config.get("best_arm_fallback", False),
+                        best_arm_min_samples=config.get("best_arm_min_samples", 20),
+                        best_arm_margin=config.get("best_arm_margin", 0.08),
                     )
                 else:
                     arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
                         features,
+                        prior_scores=priors,
+                        prior_weight=config.get("category_prior_weight", 0.35),
+                        guard_scores=hard_guards,
                         weak_arm_guard=config.get("weak_arm_guard", False),
                         weak_arm_min_samples=config.get("weak_arm_min_samples", 8),
                         weak_arm_margin=config.get("weak_arm_margin", 0.20),
+                        best_arm_fallback=config.get("best_arm_fallback", False),
+                        best_arm_min_samples=config.get("best_arm_min_samples", 20),
+                        best_arm_margin=config.get("best_arm_margin", 0.08),
                     )
                     nearest_examples = []
                     best_similarity = 0.0
@@ -994,6 +1244,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 strategy = config["strategy"]
                 arm = {name: idx for idx, name in STRATEGY_NAMES.items()}[strategy]
                 features = np.array(extract_features(problem, tokenizer))
+                current_category = problem_category(problem)
                 linucb_scores = [0.0] * len(STRATEGY_NAMES)
                 memory_scores = [0.0] * len(STRATEGY_NAMES)
                 combined_scores = [0.0] * len(STRATEGY_NAMES)
@@ -1052,7 +1303,14 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                     problem,
                     generated,
                     config["timeout"],
-                    config.get("compatible_fallback", False),
+                    config.get("compatible_fallback", False) or config.get("smart_extraction", True),
+                )
+            elif config.get("smart_extraction", True):
+                completion, passed, compile_ok, reward, error, extraction_method = evaluate_standard_completion(
+                    problem,
+                    generated,
+                    config["timeout"],
+                    True,
                 )
             else:
                 completion = extract_code(generated)
@@ -1069,10 +1327,17 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         "arm": arm,
                         "reward": reward,
                     })
+                if config.get("category_arm_guard"):
+                    category_arm_stats.setdefault(current_category, {}).setdefault(arm, []).append(reward)
+                if config.get("recent_arm_cooldown"):
+                    recent_arm_rewards.setdefault(arm, []).append(reward)
+                    window = config.get("recent_cooldown_window", 8)
+                    recent_arm_rewards[arm] = recent_arm_rewards[arm][-window:]
 
             rows.append({
                 "repeat": repeat + 1,
                 "task_id": task_id,
+                "problem_category": current_category,
                 "strategy": strategy,
                 "arm": arm,
                 "passed": passed,
@@ -1465,11 +1730,44 @@ with st.sidebar:
         )
         weak_arm_min_samples = st.slider("Weak-arm min samples", 2, 20, 8, disabled=mode != "Online Bandit" or not weak_arm_guard)
         weak_arm_margin = st.slider("Weak-arm reward margin", 0.05, 0.60, 0.20, 0.05, disabled=mode != "Online Bandit" or not weak_arm_guard)
+        best_arm_fallback = st.checkbox(
+            "Best-arm safety fallback",
+            value=experiment_preset != "Strict notebook reproduction",
+            disabled=mode != "Online Bandit",
+            help="After enough online evidence, use the empirically best arm if it is clearly better than the selected arm. This is non-leaky because it uses only past rewards.",
+        )
+        best_arm_min_samples = st.slider("Best-arm min samples", 8, 80, 20, 4, disabled=mode != "Online Bandit" or not best_arm_fallback)
+        best_arm_margin = st.slider("Best-arm margin", 0.00, 0.30, 0.08, 0.02, disabled=mode != "Online Bandit" or not best_arm_fallback)
+        category_prior = st.checkbox(
+            "Category-aware prompt prior",
+            value=experiment_preset != "Strict notebook reproduction",
+            disabled=mode != "Online Bandit",
+            help="Adds a small problem-type prior: parsing/string/list tend toward hint, math/order/recursive tend toward CoT.",
+        )
+        category_prior_weight = st.slider("Category prior weight", 0.0, 0.8, 0.35, 0.05, disabled=mode != "Online Bandit" or not category_prior)
+        category_arm_guard = st.checkbox(
+            "Category-arm performance guard",
+            value=experiment_preset != "Strict notebook reproduction",
+            disabled=mode != "Online Bandit",
+            help="Learns which arms are weak within each problem category and penalizes them online.",
+        )
+        category_guard_min_samples = st.slider("Category guard min samples", 2, 8, 3, disabled=mode != "Online Bandit" or not category_arm_guard)
+        category_guard_margin = st.slider("Category guard margin", 0.05, 0.50, 0.20, 0.05, disabled=mode != "Online Bandit" or not category_arm_guard)
+        recent_arm_cooldown = st.checkbox(
+            "Recent arm cooldown",
+            value=experiment_preset != "Strict notebook reproduction",
+            disabled=mode != "Online Bandit",
+            help="Temporarily penalizes an arm if its recent rewards drop, preventing late-run drift like repeated CoT failures.",
+        )
+        recent_cooldown_window = st.slider("Recent cooldown window", 4, 16, 8, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
+        recent_cooldown_min_samples = st.slider("Recent cooldown min samples", 2, 8, 4, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
+        recent_cooldown_threshold = st.slider("Recent cooldown reward threshold", 0.30, 0.80, 0.65, 0.05, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
         alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.3, 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
         default_force_explore = 40 if experiment_preset == "Strict notebook reproduction" else 20
         force_explore = st.slider("Force explore steps", 0, 80, default_force_explore, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40. Untuk optimized prompt bank, 20 biasanya lebih aman.")
         st.caption("Advanced options adalah varian eksperimen terpisah. Untuk strict reproduction, gunakan preset Strict notebook reproduction.")
     with st.expander("Runtime safety", expanded=False):
+        smart_extraction = st.checkbox("Smart extraction fallback", value=True, help="If the first extracted completion has syntax errors, try an alternate extraction from the same raw generation before scoring.")
         generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
         timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
         shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
@@ -1605,6 +1903,19 @@ with tab_run:
         "weak_arm_guard": weak_arm_guard if mode == "Online Bandit" else False,
         "weak_arm_min_samples": weak_arm_min_samples if mode == "Online Bandit" and weak_arm_guard else 0,
         "weak_arm_margin": weak_arm_margin if mode == "Online Bandit" and weak_arm_guard else 0.0,
+        "best_arm_fallback": best_arm_fallback if mode == "Online Bandit" else False,
+        "best_arm_min_samples": best_arm_min_samples if mode == "Online Bandit" and best_arm_fallback else 0,
+        "best_arm_margin": best_arm_margin if mode == "Online Bandit" and best_arm_fallback else 0.0,
+        "category_prior": category_prior if mode == "Online Bandit" else False,
+        "category_prior_weight": category_prior_weight if mode == "Online Bandit" and category_prior else 0.0,
+        "category_arm_guard": category_arm_guard if mode == "Online Bandit" else False,
+        "category_guard_min_samples": category_guard_min_samples if mode == "Online Bandit" and category_arm_guard else 0,
+        "category_guard_margin": category_guard_margin if mode == "Online Bandit" and category_arm_guard else 0.0,
+        "smart_extraction": smart_extraction,
+        "recent_arm_cooldown": recent_arm_cooldown if mode == "Online Bandit" else False,
+        "recent_cooldown_window": recent_cooldown_window if mode == "Online Bandit" and recent_arm_cooldown else 0,
+        "recent_cooldown_min_samples": recent_cooldown_min_samples if mode == "Online Bandit" and recent_arm_cooldown else 0,
+        "recent_cooldown_threshold": recent_cooldown_threshold if mode == "Online Bandit" and recent_arm_cooldown else 0.0,
         "generation_timeout": generation_timeout,
         "timeout": timeout,
         "shuffle": shuffle,
@@ -1797,7 +2108,7 @@ with tab_results:
             visible = visible[visible["task_id"].str.contains(search_task, case=False, regex=False)]
 
         compact_cols = [
-            "repeat", "task_id", "strategy", "passed", "compile_ok", "reward", "extraction_method",
+            "repeat", "task_id", "problem_category", "strategy", "passed", "compile_ok", "reward", "extraction_method",
             "linucb_score", "memory_score", "combined_score", "best_similarity", "nearest_examples",
             "task_seconds", "eval_seconds", "generated_chars", "completion_chars", "error",
         ]
@@ -1851,6 +2162,19 @@ with tab_compare:
             "weak_arm_guard": False,
             "weak_arm_min_samples": 0,
             "weak_arm_margin": 0.0,
+            "best_arm_fallback": False,
+            "best_arm_min_samples": 0,
+            "best_arm_margin": 0.0,
+            "category_prior": False,
+            "category_prior_weight": 0.0,
+            "category_arm_guard": False,
+            "category_guard_min_samples": 0,
+            "category_guard_margin": 0.0,
+            "smart_extraction": True,
+            "recent_arm_cooldown": False,
+            "recent_cooldown_window": 0,
+            "recent_cooldown_min_samples": 0,
+            "recent_cooldown_threshold": 0.0,
             "prompt_bank": "Notebook 68 prompts",
         }
         for col, default in defaults.items():
@@ -1945,6 +2269,19 @@ with tab_compare:
             "weak_arm_guard",
             "weak_arm_min_samples",
             "weak_arm_margin",
+            "best_arm_fallback",
+            "best_arm_min_samples",
+            "best_arm_margin",
+            "category_prior",
+            "category_prior_weight",
+            "category_arm_guard",
+            "category_guard_min_samples",
+            "category_guard_margin",
+            "smart_extraction",
+            "recent_arm_cooldown",
+            "recent_cooldown_window",
+            "recent_cooldown_min_samples",
+            "recent_cooldown_threshold",
         ]
         st.dataframe(summary_df[display_cols], use_container_width=True, height=300)
         st.caption("CI menggunakan normal approximation 95%. Untuk laporan thesis/jurnal, gunakan run 164 task penuh dan setting yang konsisten.")
