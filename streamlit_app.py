@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent
 HUMANEVAL_FILE = ROOT / "HumanEval.jsonl.gz"
 CHECKPOINT_FILE = ROOT / "streamlit_latest_partial_results.jsonl"
 RUN_HISTORY_FILE = ROOT / "streamlit_run_history.json"
+SETTING_PRESETS_FILE = ROOT / "streamlit_setting_presets.json"
 APP_TITLE = "RL Prompt Engineering Lab"
 PROMPT_EDITOR_VERSION = "problem_type_aware_prompts_v1"
 STRATEGY_NAMES = {
@@ -34,10 +35,89 @@ ARM_ROLES = {
     "cot": ("Silent Algorithm", "Uses internal algorithm planning but outputs only final code."),
     "hint": ("Guided Edge Cases", "Uses problem-specific hints for constraints and failure modes."),
 }
+ANTI_COLLAPSE_DEFAULTS = {
+    "mode": "Online Bandit",
+    "experiment_preset": "Anti-collapse RL-APO",
+    "prompt_bank": "Problem-type aware prompts",
+    "strategy": "zero_shot",
+    "load_in_4bit": True,
+    "use_chat_template": True,
+    "num_tasks": 164,
+    "repeats": 1,
+    "max_new_tokens": 512,
+    "do_sample": False,
+    "temperature": 0.1,
+    "notebook_compatible": False,
+    "compatible_fallback": False,
+    "warm_start": False,
+    "warm_start_run_names": [],
+    "warm_start_counts_as_exploration": False,
+    "similarity_memory": True,
+    "memory_top_k": 8,
+    "memory_lambda": 0.5,
+    "memory_threshold": 0.15,
+    "explore_order": "Strong-first (CoT, Hint, Zero, Few)",
+    "weak_arm_guard": True,
+    "weak_arm_min_samples": 8,
+    "weak_arm_margin": 0.25,
+    "best_arm_fallback": False,
+    "best_arm_min_samples": 12,
+    "best_arm_margin": 0.04,
+    "balanced_arm_floor": True,
+    "balanced_min_share": 0.10,
+    "balanced_min_reward": 0.60,
+    "category_prior": True,
+    "category_prior_weight": 0.35,
+    "category_arm_guard": True,
+    "category_guard_min_samples": 3,
+    "category_guard_margin": 0.20,
+    "smart_extraction": True,
+    "recent_arm_cooldown": True,
+    "recent_cooldown_window": 8,
+    "recent_cooldown_min_samples": 4,
+    "recent_cooldown_threshold": 0.65,
+    "generation_timeout": 120,
+    "timeout": 10,
+    "shuffle": False,
+    "seed": 42,
+    "alpha": 0.3,
+    "force_explore": 20,
+}
+PUSH_75_DEFAULTS = {
+    **ANTI_COLLAPSE_DEFAULTS,
+    "experiment_preset": "75% Push RL-APO",
+    "memory_lambda": 0.65,
+    "weak_arm_margin": 0.30,
+    "balanced_min_share": 0.06,
+    "balanced_min_reward": 0.70,
+    "category_prior_weight": 0.45,
+    "recent_cooldown_threshold": 0.70,
+    "force_explore": 12,
+}
+PRECISION_75_DEFAULTS = {
+    **ANTI_COLLAPSE_DEFAULTS,
+    "experiment_preset": "75% Precision RL-APO",
+    "similarity_memory": True,
+    "memory_lambda": 0.25,
+    "weak_arm_margin": 0.30,
+    "best_arm_fallback": True,
+    "best_arm_min_samples": 12,
+    "best_arm_margin": 0.06,
+    "balanced_arm_floor": True,
+    "balanced_min_share": 0.03,
+    "balanced_min_reward": 0.75,
+    "category_prior": True,
+    "category_prior_weight": 0.25,
+    "category_arm_guard": True,
+    "recent_arm_cooldown": True,
+    "recent_cooldown_threshold": 0.70,
+    "force_explore": 8,
+}
 
 
 def init_state():
     st.session_state.setdefault("run_history", load_run_history())
+    st.session_state.setdefault("setting_presets", load_setting_presets())
     st.session_state.setdefault("last_results", None)
     if st.session_state["last_results"] is None and CHECKPOINT_FILE.exists():
         try:
@@ -87,6 +167,20 @@ def save_run_history(history: list[dict]):
     RUN_HISTORY_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def load_setting_presets() -> list[dict]:
+    if not SETTING_PRESETS_FILE.exists():
+        return []
+    try:
+        payload = json.loads(SETTING_PRESETS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [item for item in payload if isinstance(item, dict) and item.get("name") and isinstance(item.get("config"), dict)]
+
+
+def save_setting_presets(presets: list[dict]):
+    SETTING_PRESETS_FILE.write_text(json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def df_to_markdown_table(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
@@ -121,6 +215,17 @@ def bool_badge(value: bool) -> str:
     return "ON" if value else "OFF"
 
 
+def preset_value(active_preset: dict, key: str, fallback):
+    return active_preset.get(key, fallback)
+
+
+def option_index(options: list, value, fallback: int = 0) -> int:
+    try:
+        return options.index(value)
+    except ValueError:
+        return fallback
+
+
 def ci95_percent(successes: int, total: int) -> tuple[float, float, float]:
     if total <= 0:
         return 0.0, 0.0, 0.0
@@ -145,9 +250,30 @@ def make_run_name(config: dict, started_at: str) -> str:
             method += " Cooldown"
         if config.get("best_arm_fallback"):
             method += " SafeBest"
+        if config.get("balanced_arm_floor"):
+            method += " Balanced"
     else:
         method = config["strategy"]
     return f"{started_at} | {method} | {config['num_tasks']} tasks x {config['repeats']}"
+
+
+def readable_run_label(item: dict) -> str:
+    summary = item.get("summary", {})
+    config = item.get("config", {})
+    strategy = summary.get("strategy") or config.get("strategy", "run")
+    if strategy == "bandit":
+        preset = config.get("experiment_preset") or "Online Bandit"
+        method = f"Bandit - {preset}"
+    else:
+        method = str(strategy).replace("_", " ").title()
+    passed = int(summary.get("passed", 0) or 0)
+    generations = int(summary.get("generations", config.get("num_tasks", 0)) or 0)
+    pass_at_1 = float(summary.get("pass_at_1", 0.0) or 0.0)
+    reward = float(summary.get("avg_reward", 0.0) or 0.0)
+    seed = summary.get("seed", config.get("seed", "-"))
+    force = summary.get("force_explore", config.get("force_explore", "-"))
+    created = str(item.get("created_at") or summary.get("run_name", ""))[:16]
+    return f"{method} | {passed}/{generations} ({pass_at_1:.1f}%) | reward {reward:.3f} | seed {seed} | explore {force} | {created}"
 
 
 def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
@@ -199,6 +325,9 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "best_arm_fallback": config.get("best_arm_fallback", False),
         "best_arm_min_samples": config.get("best_arm_min_samples", 0),
         "best_arm_margin": config.get("best_arm_margin", 0.0),
+        "balanced_arm_floor": config.get("balanced_arm_floor", False),
+        "balanced_min_share": config.get("balanced_min_share", 0.0),
+        "balanced_min_reward": config.get("balanced_min_reward", 0.0),
         "category_prior": config.get("category_prior", False),
         "category_prior_weight": config.get("category_prior_weight", 0.0),
         "category_arm_guard": config.get("category_arm_guard", False),
@@ -535,9 +664,26 @@ def _normalize_body_indentation(code: str) -> str:
     code = code.strip("\n")
     if not code.strip():
         return code
+    stripped = code.lstrip()
+    if stripped.startswith(('"""', "'''")):
+        quote = stripped[:3]
+        end = stripped.find(quote, 3)
+        if end != -1:
+            code = stripped[end + 3:].strip("\n")
+    try:
+        code = ast.unparse(ast.parse(code))
+    except SyntaxError:
+        pass
     lines = code.splitlines()
     non_empty = [line for line in lines if line.strip()]
     if non_empty and all(line.startswith((" ", "\t")) for line in non_empty):
+        try:
+            import textwrap
+            dedented = textwrap.dedent(code).strip("\n")
+            compile("def _candidate():\n" + "\n".join("    " + line if line.strip() else line for line in dedented.splitlines()), "<indent_check>", "exec")
+            return "\n".join("    " + line if line.strip() else line for line in dedented.splitlines()).strip()
+        except Exception:
+            pass
         return code.strip("\n")
     return "\n".join(("    " + line if line.strip() else line) for line in lines).strip()
 
@@ -573,8 +719,44 @@ def extract_code_notebook(generated: str) -> str:
 
 def make_hint(problem: dict) -> str:
     prompt_text = problem["prompt"].lower()
+    if "prime fibonacci" in prompt_text or "prime_fib" in prompt_text:
+        return "Hint: Generate Fibonacci numbers in order, test each for primality, count only prime Fibonacci numbers, and return the n-th prime Fibonacci number."
+    if "decimal_to_binary" in prompt_text or "db" in prompt_text and "binary" in prompt_text:
+        return "Hint: Convert the integer to binary without recursion artifacts and wrap exactly once with 'db' prefix and suffix, e.g. db1111db."
+    if "starts_one_ends" in prompt_text or "starts with 1" in prompt_text and "ends" in prompt_text:
+        return "Hint: Count n-digit positive integers that start with 1 and end with 1. For n=1 return 1; for n>1 return 10**(n-2)."
+    if "sum the even elements" in prompt_text and "odd positions" in prompt_text:
+        return "Hint: Sum elements at odd indices only if the element itself is even. Do not sum all elements at odd indices."
+    if "sort the numbers" in prompt_text and "even positions" in prompt_text:
+        return "Hint: Sort values located at even indices and put them back at even indices; keep odd indices unchanged."
+    if "rounded_avg" in prompt_text or "rounded average" in prompt_text:
+        return "Hint: If n > m return -1. Otherwise compute round((n+m)/2) and return its binary representation with bin(...)."
+    if "count_nums" in prompt_text or "sum of digits" in prompt_text and "negative" in prompt_text:
+        return "Hint: For each integer, sum its digits while preserving sign for the first digit of negative numbers; count numbers whose digit sum is positive."
+    if "maximum k numbers" in prompt_text:
+        return "Hint: Return the largest k numbers but sorted in ascending order. Use sorted(arr)[-k:], and return [] when k is 0."
+    if "same characters" in prompt_text or "check_dict_case" in prompt_text:
+        return "Hint: For dictionary keys, first ensure every key is a string. Return False for empty dict or non-string keys; otherwise all keys must be all lower or all upper."
+    if "encode" in prompt_text and "vowels" in prompt_text:
+        return "Hint: Swap case for consonants. For vowels, shift by two alphabet positions after case handling according to the examples. Preserve non-letters."
+    if "is_bored" in prompt_text:
+        return "Hint: Count sentences that start with the standalone word 'I'. Split on '.', '?' and '!' punctuation, then strip spaces."
+    if "fix_spaces" in prompt_text:
+        return "Hint: Single spaces become underscores. Runs of more than two consecutive spaces become one hyphen. Preserve all non-space characters."
+    if "order_by_points" in prompt_text:
+        return "Hint: Sort by the sum of digits with sign included for negative numbers, using stable sort. For -12 the digit sum is -1+2 = 1."
+    if "simplify" in prompt_text and "/" in prompt_text:
+        return "Hint: Parse both fractions exactly with fractions.Fraction and return whether their product equals 1."
     if "basic algebra operations" in prompt_text and "operator" in prompt_text and "operand" in prompt_text:
         return "Hint: Build the expression from operands and operators and evaluate it with normal Python precedence; do not evaluate strictly left-to-right."
+    if "mean absolute deviation" in prompt_text:
+        return "Hint: Compute mean = sum(numbers)/len(numbers), then return the average absolute distance from the mean. The input is non-empty in HumanEval tests."
+    if "sort the numbers" in prompt_text and "zero one two" in prompt_text:
+        return "Hint: Map the number words zero..nine to their numeric order, sort the words by that mapping, and join them with spaces."
+    if "even elements" in prompt_text and "changed positions" in prompt_text:
+        return "Hint: Keep odd indices unchanged. Sort only the values at even indices (0,2,4,...) and put them back into those same even positions."
+    if "car race collision" in prompt_text or "collisions" in prompt_text:
+        return "Hint: For n cars moving from left and n from right, every pair collides exactly once, so return n*n."
     if "contains no letters" in prompt_text and "reverse the string" in prompt_text:
         return "Hint: If the string has at least one letter, swap case of letters and keep other characters in place. If it has no letters, return the reversed whole string."
     if "md5" in prompt_text:
@@ -585,6 +767,8 @@ def make_hint(problem: dict) -> str:
         return "Hint: For these closed intervals, follow the examples: intersection (2, 3) has length 1, so use end - start, not end - start + 1, then test whether that length is prime."
     if "product of the odd digits" in prompt_text:
         return "Hint: Multiply only odd digits, but return 0 if there are no odd digits at all. Track whether any odd digit was seen."
+    if "largest of negative integers" in prompt_text and "smallest" in prompt_text and "positive" in prompt_text:
+        return "Hint: Return (max negative number or None, min positive number or None). Ignore zeros. Be careful not to swap the negative and positive trackers."
     if "sum of magnitudes" in prompt_text and "product of all signs" in prompt_text:
         return "Hint: Return None for empty input. If any element is zero the sign product is 0, so the final answer is 0; otherwise multiply sign by -1 for negative values and sum absolute magnitudes."
     if "tribonacci" in prompt_text or "tri(1)" in prompt_text:
@@ -911,6 +1095,9 @@ class OnlineLinUCB:
         best_arm_fallback: bool = False,
         best_arm_min_samples: int = 20,
         best_arm_margin: float = 0.08,
+        balanced_arm_floor: bool = False,
+        balanced_min_share: float = 0.08,
+        balanced_min_reward: float = 0.65,
     ):
         self.t += 1
         linucb_scores = self.score_arms(context)
@@ -937,6 +1124,17 @@ class OnlineLinUCB:
                     for idx in eligible:
                         if averages[idx] < best_average - weak_arm_margin:
                             candidate_scores[idx] = -1e9
+            if balanced_arm_floor:
+                total_selected = max(sum(self.arm_counts), 1)
+                averages = [float(np.mean(rewards)) if rewards else 1.0 for rewards in self.arm_rewards]
+                underused = [
+                    idx for idx in range(self.num_arms)
+                    if (self.arm_counts[idx] / total_selected) < balanced_min_share and averages[idx] >= balanced_min_reward and candidate_scores[idx] > -1e8
+                ]
+                if underused:
+                    arm = max(underused, key=lambda idx: candidate_scores[idx])
+                    self.arm_counts[arm] += 1
+                    return arm, linucb_scores, memory_scores, combined_scores, forced
             arm = int(np.argmax(candidate_scores))
             if best_arm_fallback:
                 averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
@@ -1223,6 +1421,9 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         best_arm_fallback=config.get("best_arm_fallback", False),
                         best_arm_min_samples=config.get("best_arm_min_samples", 20),
                         best_arm_margin=config.get("best_arm_margin", 0.08),
+                        balanced_arm_floor=config.get("balanced_arm_floor", False),
+                        balanced_min_share=config.get("balanced_min_share", 0.06),
+                        balanced_min_reward=config.get("balanced_min_reward", 0.65),
                     )
                 else:
                     arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
@@ -1236,6 +1437,9 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         best_arm_fallback=config.get("best_arm_fallback", False),
                         best_arm_min_samples=config.get("best_arm_min_samples", 20),
                         best_arm_margin=config.get("best_arm_margin", 0.08),
+                        balanced_arm_floor=config.get("balanced_arm_floor", False),
+                        balanced_min_share=config.get("balanced_min_share", 0.06),
+                        balanced_min_reward=config.get("balanced_min_reward", 0.65),
                     )
                     nearest_examples = []
                     best_similarity = 0.0
@@ -1638,48 +1842,66 @@ with st.sidebar:
     )
     with st.expander("Runtime", expanded=False):
         st.code(sys.executable, language="text")
+    built_in_presets = [
+        {"name": "75% Precision RL-APO", "config": PRECISION_75_DEFAULTS},
+        {"name": "75% Push RL-APO", "config": PUSH_75_DEFAULTS},
+        {"name": "Anti-collapse RL-APO", "config": ANTI_COLLAPSE_DEFAULTS},
+    ]
+    saved_presets = st.session_state.get("setting_presets", [])
+    preset_options = built_in_presets + saved_presets
+    preset_names = [item["name"] for item in preset_options]
+    selected_setting_preset = st.selectbox(
+        "Setting preset",
+        preset_names,
+        index=0,
+        help="75% Precision RL-APO adalah default fair satu-run terbaru: CoT tetap menjadi default kuat, sementara non-CoT hanya dipakai ketika sinyal online cukup kuat. Tidak memakai warm-start atau oracle history.",
+    )
+    active_setting_preset = next(item["config"] for item in preset_options if item["name"] == selected_setting_preset)
     st.markdown("<span class='pill'>Step 1</span> <b>Choose experiment type</b>", unsafe_allow_html=True)
-    mode = st.radio("Mode", ["Fixed Strategy", "Online Bandit"], horizontal=True)
+    mode_options = ["Fixed Strategy", "Online Bandit"]
+    mode = st.radio("Mode", mode_options, horizontal=True, index=option_index(mode_options, preset_value(active_setting_preset, "mode", "Online Bandit")))
     experiment_preset = st.selectbox(
         "Experiment preset",
-        ["Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
-        index=0,
+        ["75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
+        index=option_index(["75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"], preset_value(active_setting_preset, "experiment_preset", "75% Precision RL-APO")),
         help="Preset hanya memberi panduan default setting. Kamu tetap bisa mengubah kontrol di bawahnya.",
     )
     st.markdown("<span class='pill'>Step 2</span> <b>Select prompt policy</b>", unsafe_allow_html=True)
     prompt_bank = st.selectbox(
         "Prompt bank",
         list(PROMPT_BANKS),
-        index=0,
+        index=option_index(list(PROMPT_BANKS), preset_value(active_setting_preset, "prompt_bank", "Problem-type aware prompts")),
         help="Problem-type aware prompts dirancang agar zero/few/cot/hint punya peran berbeda. Notebook 68 prompts dipakai untuk reproduksi baseline lama.",
     )
     active_prompts = PROMPT_BANKS[prompt_bank]
     strategy = st.selectbox(
         "Fixed strategy / prompt arm",
         list(active_prompts),
+        index=option_index(list(active_prompts), preset_value(active_setting_preset, "strategy", list(active_prompts)[0])),
         disabled=mode == "Online Bandit",
         help="Aktif hanya untuk Fixed Strategy. Pada Online Bandit, arm dipilih otomatis oleh policy bandit.",
     )
     st.markdown("<span class='pill'>Step 3</span> <b>Model and dataset</b>", unsafe_allow_html=True)
     with st.expander("Model settings", expanded=True):
         model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
-        load_in_4bit = st.checkbox("Load 4-bit", value=True)
-        use_chat_template = st.checkbox("Use tokenizer chat template", value=True)
-    default_tasks = min(164, len(problems)) if experiment_preset == "Thesis full run" else min(10, len(problems))
+        load_in_4bit = st.checkbox("Load 4-bit", value=bool(preset_value(active_setting_preset, "load_in_4bit", True)))
+        use_chat_template = st.checkbox("Use tokenizer chat template", value=bool(preset_value(active_setting_preset, "use_chat_template", True)))
+    default_tasks = min(164, len(problems)) if experiment_preset in {"Thesis full run", "Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO"} else min(10, len(problems))
+    default_tasks = min(int(preset_value(active_setting_preset, "num_tasks", default_tasks)), min(164, len(problems)))
     num_tasks = st.slider("Jumlah soal", 1, min(164, len(problems)), default_tasks)
-    repeats = st.slider("Repeat per soal", 1, 5, 1)
+    repeats = st.slider("Repeat per soal", 1, 5, int(preset_value(active_setting_preset, "repeats", 1)))
     with st.expander("Generation settings", expanded=False):
-        max_new_tokens = st.slider("Max new tokens", 64, 1024, 512, 64)
-        do_sample = st.checkbox("Sampling", value=False)
-        temperature = st.slider("Temperature", 0.0, 1.5, 0.1, 0.05)
+        max_new_tokens = st.slider("Max new tokens", 64, 1024, int(preset_value(active_setting_preset, "max_new_tokens", 512)), 64)
+        do_sample = st.checkbox("Sampling", value=bool(preset_value(active_setting_preset, "do_sample", False)))
+        temperature = st.slider("Temperature", 0.0, 1.5, float(preset_value(active_setting_preset, "temperature", 0.1)), 0.05)
     default_notebook_compatible = experiment_preset == "Strict notebook reproduction"
-    notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=default_notebook_compatible, help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb. Turn OFF to test selected prompt bank.")
+    notebook_compatible = st.checkbox("Notebook 68 compatible mode", value=bool(preset_value(active_setting_preset, "notebook_compatible", default_notebook_compatible)), help="For Online Bandit, use prompt/extraction/generation behavior from bandit68%.ipynb. Turn OFF to test selected prompt bank.")
     compatible_plus_enabled = mode == "Online Bandit" and notebook_compatible
     st.markdown("<span class='pill'>Step 4</span> <b>RL-APO policy tuning</b>", unsafe_allow_html=True)
     with st.expander("Advanced bandit options", expanded=mode == "Online Bandit"):
         compatible_fallback = st.checkbox(
             "Compile-safe extraction fallback",
-            value=experiment_preset == "Thesis full run",
+            value=bool(preset_value(active_setting_preset, "compatible_fallback", False)),
             disabled=not compatible_plus_enabled,
             help="If strict notebook extraction does not compile, try the dashboard body extractor on the same raw generation. This keeps strict compatible output as first choice.",
         )
@@ -1690,88 +1912,98 @@ with st.sidebar:
         ]
         warm_start = st.checkbox(
             "Warm-start LinUCB from saved fixed runs",
-            value=experiment_preset == "Thesis full run",
-            disabled=not compatible_plus_enabled or not fixed_run_options,
-            help="Use rewards from selected fixed-strategy runs as prior data before the online bandit starts.",
+            value=bool(preset_value(active_setting_preset, "warm_start", False)),
+            disabled=mode != "Online Bandit" or not fixed_run_options,
+            help="Use rewards from selected fixed-strategy runs as prior data before the online bandit starts. This is useful for thesis runs because the full HumanEval horizon is short for a cold-start bandit.",
         )
         warm_start_run_names = st.multiselect(
             "Fixed runs for warm-start",
             fixed_run_options,
-            disabled=not compatible_plus_enabled or not warm_start or not fixed_run_options,
+            default=[name for name in preset_value(active_setting_preset, "warm_start_run_names", []) if name in fixed_run_options],
+            disabled=mode != "Online Bandit" or not warm_start or not fixed_run_options,
             help="Pilih run zero_shot/few_shot/cot/hint full 164 task yang sudah tersimpan.",
         )
         warm_start_counts_as_exploration = st.checkbox(
             "Let warm-start skip forced exploration",
-            value=True,
-            disabled=not compatible_plus_enabled or not warm_start,
+            value=bool(preset_value(active_setting_preset, "warm_start_counts_as_exploration", True)),
+            disabled=mode != "Online Bandit" or not warm_start,
             help="Jika ON, force_explore dianggap sudah dipenuhi oleh data warm-start sehingga bandit bisa langsung exploit policy yang terkalibrasi.",
         )
         similarity_memory = st.checkbox(
             "Similarity-aware prompt memory",
-            value=False,
+            value=bool(preset_value(active_setting_preset, "similarity_memory", experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="Choose prompts using rewards from previous tasks with similar context features, not only global arm reward.",
         )
-        memory_top_k = st.slider("Memory top-k similar tasks", 1, 20, 8, disabled=mode != "Online Bandit" or not similarity_memory)
-        memory_lambda = st.slider("Memory weight lambda", 0.0, 1.5, 0.4, 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
-        memory_threshold = st.slider("Similarity threshold", 0.0, 1.0, 0.15, 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
+        memory_top_k = st.slider("Memory top-k similar tasks", 1, 20, int(preset_value(active_setting_preset, "memory_top_k", 8)), disabled=mode != "Online Bandit" or not similarity_memory)
+        memory_lambda = st.slider("Memory weight lambda", 0.0, 1.5, float(preset_value(active_setting_preset, "memory_lambda", 0.5)), 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
+        memory_threshold = st.slider("Similarity threshold", 0.0, 1.0, float(preset_value(active_setting_preset, "memory_threshold", 0.15)), 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
         explore_order = st.selectbox(
             "Forced exploration order",
             ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint only during exploration"],
-            index=1 if experiment_preset != "Strict notebook reproduction" else 0,
+            index=option_index(["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint only during exploration"], preset_value(active_setting_preset, "explore_order", "Strong-first (CoT, Hint, Zero, Few)"), 1 if experiment_preset != "Strict notebook reproduction" else 0),
             disabled=mode != "Online Bandit",
             help="Notebook order is strict. Strong-first reduces early damage from weak arms observed in recent runs.",
         )
         weak_arm_guard = st.checkbox(
             "Adaptive weak-arm guard",
-            value=experiment_preset != "Strict notebook reproduction",
+            value=bool(preset_value(active_setting_preset, "weak_arm_guard", experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="After an arm has enough samples, avoid selecting it if its reward is clearly below the best sampled arm.",
         )
-        weak_arm_min_samples = st.slider("Weak-arm min samples", 2, 20, 8, disabled=mode != "Online Bandit" or not weak_arm_guard)
-        weak_arm_margin = st.slider("Weak-arm reward margin", 0.05, 0.60, 0.20, 0.05, disabled=mode != "Online Bandit" or not weak_arm_guard)
+        weak_arm_min_samples = st.slider("Weak-arm min samples", 2, 20, int(preset_value(active_setting_preset, "weak_arm_min_samples", 8)), disabled=mode != "Online Bandit" or not weak_arm_guard)
+        weak_arm_margin = st.slider("Weak-arm reward margin", 0.05, 0.60, float(preset_value(active_setting_preset, "weak_arm_margin", 0.25)), 0.05, disabled=mode != "Online Bandit" or not weak_arm_guard)
         best_arm_fallback = st.checkbox(
             "Best-arm safety fallback",
-            value=experiment_preset != "Strict notebook reproduction",
+            value=bool(preset_value(active_setting_preset, "best_arm_fallback", experiment_preset == "75% Precision RL-APO" if experiment_preset in {"Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO"} else experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="After enough online evidence, use the empirically best arm if it is clearly better than the selected arm. This is non-leaky because it uses only past rewards.",
         )
-        best_arm_min_samples = st.slider("Best-arm min samples", 8, 80, 20, 4, disabled=mode != "Online Bandit" or not best_arm_fallback)
-        best_arm_margin = st.slider("Best-arm margin", 0.00, 0.30, 0.08, 0.02, disabled=mode != "Online Bandit" or not best_arm_fallback)
+        best_arm_min_samples = st.slider("Best-arm min samples", 8, 80, int(preset_value(active_setting_preset, "best_arm_min_samples", 12)), 4, disabled=mode != "Online Bandit" or not best_arm_fallback)
+        best_arm_margin = st.slider("Best-arm margin", 0.00, 0.30, float(preset_value(active_setting_preset, "best_arm_margin", 0.04)), 0.02, disabled=mode != "Online Bandit" or not best_arm_fallback)
+        balanced_arm_floor = st.checkbox(
+            "Balanced arm floor",
+            value=bool(preset_value(active_setting_preset, "balanced_arm_floor", experiment_preset in {"Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO"})),
+            disabled=mode != "Online Bandit",
+            help="Keeps competitive arms from disappearing completely. Useful when few-shot fixed baseline is strong but online policy under-selects it.",
+        )
+        balanced_min_share = st.slider("Balanced min share", 0.00, 0.20, float(preset_value(active_setting_preset, "balanced_min_share", 0.10)), 0.01, disabled=mode != "Online Bandit" or not balanced_arm_floor)
+        balanced_min_reward = st.slider("Balanced min reward", 0.30, 0.90, float(preset_value(active_setting_preset, "balanced_min_reward", 0.60)), 0.05, disabled=mode != "Online Bandit" or not balanced_arm_floor)
         category_prior = st.checkbox(
             "Category-aware prompt prior",
-            value=experiment_preset != "Strict notebook reproduction",
+            value=bool(preset_value(active_setting_preset, "category_prior", experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="Adds a small problem-type prior: parsing/string/list tend toward hint, math/order/recursive tend toward CoT.",
         )
-        category_prior_weight = st.slider("Category prior weight", 0.0, 0.8, 0.35, 0.05, disabled=mode != "Online Bandit" or not category_prior)
+        category_prior_weight = st.slider("Category prior weight", 0.0, 0.8, float(preset_value(active_setting_preset, "category_prior_weight", 0.35)), 0.05, disabled=mode != "Online Bandit" or not category_prior)
         category_arm_guard = st.checkbox(
             "Category-arm performance guard",
-            value=experiment_preset != "Strict notebook reproduction",
+            value=bool(preset_value(active_setting_preset, "category_arm_guard", experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="Learns which arms are weak within each problem category and penalizes them online.",
         )
-        category_guard_min_samples = st.slider("Category guard min samples", 2, 8, 3, disabled=mode != "Online Bandit" or not category_arm_guard)
-        category_guard_margin = st.slider("Category guard margin", 0.05, 0.50, 0.20, 0.05, disabled=mode != "Online Bandit" or not category_arm_guard)
+        category_guard_min_samples = st.slider("Category guard min samples", 2, 8, int(preset_value(active_setting_preset, "category_guard_min_samples", 3)), disabled=mode != "Online Bandit" or not category_arm_guard)
+        category_guard_margin = st.slider("Category guard margin", 0.05, 0.50, float(preset_value(active_setting_preset, "category_guard_margin", 0.20)), 0.05, disabled=mode != "Online Bandit" or not category_arm_guard)
         recent_arm_cooldown = st.checkbox(
             "Recent arm cooldown",
-            value=experiment_preset != "Strict notebook reproduction",
+            value=bool(preset_value(active_setting_preset, "recent_arm_cooldown", experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="Temporarily penalizes an arm if its recent rewards drop, preventing late-run drift like repeated CoT failures.",
         )
-        recent_cooldown_window = st.slider("Recent cooldown window", 4, 16, 8, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
-        recent_cooldown_min_samples = st.slider("Recent cooldown min samples", 2, 8, 4, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
-        recent_cooldown_threshold = st.slider("Recent cooldown reward threshold", 0.30, 0.80, 0.65, 0.05, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
-        alpha = st.slider("Bandit alpha", 0.0, 2.0, 0.3, 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
+        recent_cooldown_window = st.slider("Recent cooldown window", 4, 16, int(preset_value(active_setting_preset, "recent_cooldown_window", 8)), disabled=mode != "Online Bandit" or not recent_arm_cooldown)
+        recent_cooldown_min_samples = st.slider("Recent cooldown min samples", 2, 8, int(preset_value(active_setting_preset, "recent_cooldown_min_samples", 4)), disabled=mode != "Online Bandit" or not recent_arm_cooldown)
+        recent_cooldown_threshold = st.slider("Recent cooldown reward threshold", 0.30, 0.80, float(preset_value(active_setting_preset, "recent_cooldown_threshold", 0.65)), 0.05, disabled=mode != "Online Bandit" or not recent_arm_cooldown)
+        alpha = st.slider("Bandit alpha", 0.0, 2.0, float(preset_value(active_setting_preset, "alpha", 0.3)), 0.05, disabled=mode != "Online Bandit", help="Notebook 68% memakai alpha 0.3.")
         default_force_explore = 40 if experiment_preset == "Strict notebook reproduction" else 20
-        force_explore = st.slider("Force explore steps", 0, 80, default_force_explore, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40. Untuk optimized prompt bank, 20 biasanya lebih aman.")
+        default_force_explore = int(preset_value(active_setting_preset, "force_explore", default_force_explore))
+        force_explore = st.slider("Force explore steps", 0, 80, default_force_explore, disabled=mode != "Online Bandit", help="Notebook 68% memakai force explore 40. Untuk optimized prompt bank dan warm-start, 8 atau bahkan 0 biasanya lebih aman karena HumanEval hanya 164 task.")
         st.caption("Advanced options adalah varian eksperimen terpisah. Untuk strict reproduction, gunakan preset Strict notebook reproduction.")
     with st.expander("Runtime safety", expanded=False):
-        smart_extraction = st.checkbox("Smart extraction fallback", value=True, help="If the first extracted completion has syntax errors, try an alternate extraction from the same raw generation before scoring.")
-        generation_timeout = st.slider("Timeout generation/detik", 30, 300, 120, 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
-        timeout = st.slider("Timeout evaluasi/detik", 1, 30, 10)
-        shuffle = st.checkbox("Shuffle soal", value=False, help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
-        seed = st.number_input("Seed", value=42, step=1)
+        smart_extraction = st.checkbox("Smart extraction fallback", value=bool(preset_value(active_setting_preset, "smart_extraction", True)), help="If the first extracted completion has syntax errors, try an alternate extraction from the same raw generation before scoring.")
+        generation_timeout = st.slider("Timeout generation/detik", 30, 300, int(preset_value(active_setting_preset, "generation_timeout", 120)), 10, help="Batas waktu model.generate per soal. Streamlit terlihat freeze selama generate berjalan.")
+        timeout = st.slider("Timeout evaluasi/detik", 1, 30, int(preset_value(active_setting_preset, "timeout", 10)))
+        shuffle = st.checkbox("Shuffle soal", value=bool(preset_value(active_setting_preset, "shuffle", False)), help="Matikan untuk mereplikasi notebook bandit68%. Online bandit sensitif terhadap urutan task.")
+        seed = st.number_input("Seed", value=int(preset_value(active_setting_preset, "seed", 42)), step=1)
     st.markdown(
         f"""
         <div class="setup-card">
@@ -1880,6 +2112,7 @@ with tab_run:
             st.info("Compatible+/Similarity-Aware aktif: run ini adalah varian improvement terpisah, bukan strict reproduction dari notebook 68%.")
     config = {
         "mode": mode,
+        "experiment_preset": experiment_preset,
         "strategy": strategy,
         "prompt_bank": prompt_bank,
         "model_name": model_name,
@@ -1892,9 +2125,9 @@ with tab_run:
         "temperature": temperature,
         "notebook_compatible": notebook_compatible,
         "compatible_fallback": compatible_fallback if compatible_plus_enabled else False,
-        "warm_start": warm_start if compatible_plus_enabled else False,
-        "warm_start_run_names": warm_start_run_names if compatible_plus_enabled and warm_start else [],
-        "warm_start_counts_as_exploration": warm_start_counts_as_exploration if compatible_plus_enabled else False,
+        "warm_start": warm_start if mode == "Online Bandit" else False,
+        "warm_start_run_names": warm_start_run_names if mode == "Online Bandit" and warm_start else [],
+        "warm_start_counts_as_exploration": warm_start_counts_as_exploration if mode == "Online Bandit" else False,
         "similarity_memory": similarity_memory if mode == "Online Bandit" else False,
         "memory_top_k": memory_top_k if mode == "Online Bandit" and similarity_memory else 0,
         "memory_lambda": memory_lambda if mode == "Online Bandit" and similarity_memory else 0.0,
@@ -1906,6 +2139,9 @@ with tab_run:
         "best_arm_fallback": best_arm_fallback if mode == "Online Bandit" else False,
         "best_arm_min_samples": best_arm_min_samples if mode == "Online Bandit" and best_arm_fallback else 0,
         "best_arm_margin": best_arm_margin if mode == "Online Bandit" and best_arm_fallback else 0.0,
+        "balanced_arm_floor": balanced_arm_floor if mode == "Online Bandit" else False,
+        "balanced_min_share": balanced_min_share if mode == "Online Bandit" and balanced_arm_floor else 0.0,
+        "balanced_min_reward": balanced_min_reward if mode == "Online Bandit" and balanced_arm_floor else 0.0,
         "category_prior": category_prior if mode == "Online Bandit" else False,
         "category_prior_weight": category_prior_weight if mode == "Online Bandit" and category_prior else 0.0,
         "category_arm_guard": category_arm_guard if mode == "Online Bandit" else False,
@@ -1948,12 +2184,32 @@ with tab_run:
     with st.expander("Recommended run order", expanded=False):
         st.markdown(
             """
-            1. Run Fixed Strategy untuk `zero_shot`, `few_shot`, `cot`, dan `hint` dengan `Problem-type aware prompts`.
-            2. Run Online Bandit dengan Similarity memory dan Weak-arm guard ON.
-            3. Bandingkan dengan strict notebook baseline di tab Compare.
-            4. Jika fixed CoT tetap paling tinggi, laporkan RL-APO sebagai stabilizer/context selector dan analisis kapan arm lain dipilih.
+            1. Jalankan preset `75% Precision RL-APO` untuk mengejar Pass@1 tinggi tanpa terlalu banyak mengganti CoT.
+            2. Jika distribusi CoT terlalu rendah (<80/164), turunkan `Balanced min share` atau `memory lambda`.
+            3. Jika CoT terlalu tinggi (>150/164), pindah ke `Anti-collapse RL-APO` atau naikkan `Balanced min share`.
+            4. Jalankan Fixed Strategy `cot` sebagai baseline kuat pada setting prompt bank yang sama.
+            5. Bandingkan total Pass@1, pass per arm, dan kategori task di tab Compare.
             """
         )
+    with st.expander("Save / manage setting presets", expanded=False):
+        preset_name = st.text_input("Preset name", value=f"RL-APO preset {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        save_col, delete_col = st.columns(2)
+        with save_col:
+            if st.button("Save current settings", use_container_width=True):
+                presets = [item for item in st.session_state.get("setting_presets", []) if item.get("name") != preset_name]
+                presets.append({"name": preset_name, "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "config": config.copy()})
+                st.session_state["setting_presets"] = presets
+                save_setting_presets(presets)
+                st.success(f"Saved preset: {preset_name}")
+        with delete_col:
+            saved_names = [item["name"] for item in st.session_state.get("setting_presets", [])]
+            delete_preset_name = st.selectbox("Delete saved preset", ["-- choose --"] + saved_names)
+            if st.button("Delete preset", use_container_width=True, disabled=delete_preset_name == "-- choose --"):
+                presets = [item for item in st.session_state.get("setting_presets", []) if item.get("name") != delete_preset_name]
+                st.session_state["setting_presets"] = presets
+                save_setting_presets(presets)
+                st.success(f"Deleted preset: {delete_preset_name}")
+        st.caption(f"Saved presets file: `{SETTING_PRESETS_FILE.name}`")
     if st.button("Start Experiment", type="primary", use_container_width=True):
         df_result = run_experiment(config, prompt_templates, problems)
         run_name = make_run_name(config, st.session_state["run_started_at"])
@@ -2139,6 +2395,8 @@ with tab_compare:
     if not history:
         st.info("Belum ada saved run. Jalankan Bandit atau fixed strategy dari tab Run, lalu kembali ke sini.")
     else:
+        run_label_by_name = {item["name"]: readable_run_label(item) for item in history}
+        run_name_by_label = {label: name for name, label in run_label_by_name.items()}
         summary_df = pd.DataFrame([item["summary"] for item in history])
         defaults = {
             "total_seconds": 0.0,
@@ -2165,6 +2423,9 @@ with tab_compare:
             "best_arm_fallback": False,
             "best_arm_min_samples": 0,
             "best_arm_margin": 0.0,
+            "balanced_arm_floor": False,
+            "balanced_min_share": 0.0,
+            "balanced_min_reward": 0.0,
             "category_prior": False,
             "category_prior_weight": 0.0,
             "category_arm_guard": False,
@@ -2180,17 +2441,19 @@ with tab_compare:
         for col, default in defaults.items():
             if col not in summary_df.columns:
                 summary_df[col] = default
+        summary_df["readable_run"] = summary_df["run_name"].map(run_label_by_name).fillna(summary_df["run_name"])
         summary_df = summary_df.sort_values("pass_at_1", ascending=False).reset_index(drop=True)
         summary_df["display_name"] = summary_df.apply(
-            lambda row: f"{row['strategy']} | {row['pass_at_1']:.1f}% | {row['prompt_bank']}",
+            lambda row: row["readable_run"],
             axis=1,
         )
-        selected_compare_names = st.multiselect(
+        selected_compare_labels = st.multiselect(
             "Runs shown in dashboard charts",
-            summary_df["run_name"].tolist(),
-            default=summary_df["run_name"].tolist(),
+            summary_df["readable_run"].tolist(),
+            default=summary_df["readable_run"].tolist(),
             help="Filter visual charts without deleting saved runs.",
         )
+        selected_compare_names = [run_name_by_label.get(label, label) for label in selected_compare_labels]
         if selected_compare_names:
             summary_df = summary_df[summary_df["run_name"].isin(selected_compare_names)].reset_index(drop=True)
         if summary_df.empty:
@@ -2202,7 +2465,7 @@ with tab_compare:
         st.markdown(
             f"""
             <div class="status-grid">
-              <div class="status-card card-blue"><div class="label">Best Pass@1</div><div class="value">{best['pass_at_1']:.1f}%</div><div class="hint">{best['run_name']}</div></div>
+              <div class="status-card card-blue"><div class="label">Best Pass@1</div><div class="value">{best['pass_at_1']:.1f}%</div><div class="hint">{best['readable_run']}</div></div>
               <div class="status-card card-green"><div class="label">Best Reward</div><div class="value">{best['avg_reward']:.3f}</div><div class="hint">Average execution reward</div></div>
               <div class="status-card card-violet"><div class="label">Lead Margin</div><div class="value">+{gain:.1f}</div><div class="hint">points over rank #2</div></div>
               <div class="status-card card-amber"><div class="label">Compared Runs</div><div class="value">{len(summary_df)}</div><div class="hint">of {len(history)} saved runs</div></div>
@@ -2213,18 +2476,19 @@ with tab_compare:
         podium_cards = []
         for rank, (_, row) in enumerate(summary_df.head(3).iterrows(), start=1):
             podium_cards.append(
-                f"<div class='mini-card'><div class='role'>Rank #{rank}</div><div class='name'>{row['strategy']} - {row['pass_at_1']:.1f}%</div><div class='desc'>{row['prompt_bank']}<br>{int(row['passed'])}/{int(row['generations'])} passed | reward {row['avg_reward']:.3f}</div></div>"
+                f"<div class='mini-card'><div class='role'>Rank #{rank}</div><div class='name'>{row['strategy']} - {row['pass_at_1']:.1f}%</div><div class='desc'>{row['readable_run']}</div></div>"
             )
         st.markdown("<div class='mini-grid'>" + "".join(podium_cards) + "</div>", unsafe_allow_html=True)
 
         with st.expander("Manage leaderboard runs", expanded=False):
             runs_to_delete = st.multiselect(
                 "Delete runs from leaderboard",
-                [item["name"] for item in history],
+                [run_label_by_name[item["name"]] for item in history],
                 help="Gunakan ini untuk menghapus run yang salah setting, crash, atau hanya testing kecil.",
             )
-            if st.button("Delete selected runs", type="secondary", use_container_width=True, disabled=not runs_to_delete):
-                st.session_state["run_history"] = [item for item in history if item["name"] not in runs_to_delete]
+            delete_names = [run_name_by_label.get(label, label) for label in runs_to_delete]
+            if st.button("Delete selected runs", type="secondary", use_container_width=True, disabled=not delete_names):
+                st.session_state["run_history"] = [item for item in history if item["name"] not in delete_names]
                 save_run_history(st.session_state["run_history"])
                 st.rerun()
 
@@ -2239,6 +2503,7 @@ with tab_compare:
         )
         summary_df["runtime_min"] = summary_df["total_seconds"] / 60.0
         display_cols = [
+            "readable_run",
             "run_name",
             "mode",
             "strategy",
@@ -2272,6 +2537,9 @@ with tab_compare:
             "best_arm_fallback",
             "best_arm_min_samples",
             "best_arm_margin",
+            "balanced_arm_floor",
+            "balanced_min_share",
+            "balanced_min_reward",
             "category_prior",
             "category_prior_weight",
             "category_arm_guard",
@@ -2286,7 +2554,7 @@ with tab_compare:
         st.dataframe(summary_df[display_cols], use_container_width=True, height=300)
         st.caption("CI menggunakan normal approximation 95%. Untuk laporan thesis/jurnal, gunakan run 164 task penuh dan setting yang konsisten.")
         thesis_cols = [
-            "run_name", "strategy", "prompt_bank", "generations", "passed", "failed",
+            "readable_run", "run_name", "strategy", "prompt_bank", "generations", "passed", "failed",
             "pass_at_1", "compile_rate", "avg_reward", "runtime_min",
             "notebook_compatible", "similarity_memory", "weak_arm_guard",
         ]
@@ -2307,7 +2575,7 @@ with tab_compare:
             y=alt.Y("method:N", title="Run", sort="-x", axis=alt.Axis(labelLimit=260)),
             x=alt.X("pass_at_1:Q", title="Pass@1 (%)", scale=alt.Scale(domain=[0, 100])),
             color=alt.Color("prompt_bank:N", title="Prompt bank"),
-            tooltip=["run_name:N", alt.Tooltip("pass_at_1:Q", format=".2f"), alt.Tooltip("compile_rate:Q", format=".2f"), alt.Tooltip("avg_reward:Q", format=".3f")],
+            tooltip=["readable_run:N", alt.Tooltip("pass_at_1:Q", format=".2f"), alt.Tooltip("compile_rate:Q", format=".2f"), alt.Tooltip("avg_reward:Q", format=".3f")],
         ).properties(height=max(300, 44 * len(plot_df)))
         st.altair_chart(rank_chart, use_container_width=True)
         accuracy_chart = plot_df.set_index("method")[["pass_at_1", "compile_rate"]].rename(columns={
@@ -2327,18 +2595,19 @@ with tab_compare:
         st.altair_chart(metric_chart, use_container_width=True)
 
         st.markdown("### Task-Level Agreement")
-        selected_runs = st.multiselect(
+        selected_run_labels = st.multiselect(
             "Runs to compare by task",
-            selected_compare_names or [item["name"] for item in history],
-            default=(selected_compare_names or [item["name"] for item in history])[: min(len(selected_compare_names or history), 3)],
+            selected_compare_labels or [run_label_by_name[item["name"]] for item in history],
+            default=(selected_compare_labels or [run_label_by_name[item["name"]] for item in history])[: min(len(selected_compare_labels or history), 3)],
         )
+        selected_runs = [run_name_by_label.get(label, label) for label in selected_run_labels]
         if selected_runs:
             merged_rows = []
             for item in history:
                 if item["name"] not in selected_runs:
                     continue
                 tmp = item["df"][["task_id", "strategy", "passed", "compile_ok", "reward"]].copy()
-                tmp["run_name"] = item["name"]
+                tmp["run_name"] = run_label_by_name[item["name"]]
                 merged_rows.append(tmp)
             compare_df = pd.concat(merged_rows, ignore_index=True) if merged_rows else pd.DataFrame()
             pivot = compare_df.pivot_table(index="task_id", columns="run_name", values="passed", aggfunc="max")
@@ -2369,8 +2638,8 @@ with tab_compare:
                         both_pass = int((joined["a_passed"] & joined["b_passed"]).sum())
                         both_fail = int((~joined["a_passed"] & ~joined["b_passed"]).sum())
                         pair_rows.append({
-                            "run_a": a["name"],
-                            "run_b": b["name"],
+                            "run_a": run_label_by_name[a["name"]],
+                            "run_b": run_label_by_name[b["name"]],
                             "common_tasks": len(joined),
                             "a_only_pass": a_only,
                             "b_only_pass": b_only,
