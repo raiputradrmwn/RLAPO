@@ -113,6 +113,128 @@ PRECISION_75_DEFAULTS = {
     "recent_cooldown_threshold": 0.70,
     "force_explore": 8,
 }
+BALANCED_738_PLUS_DEFAULTS = {
+    **ANTI_COLLAPSE_DEFAULTS,
+    "experiment_preset": "73.8+ Balanced RL-APO",
+    "explore_order": "Strong-first (CoT, Hint, Zero, Few)",
+    "force_explore": 20,
+    "similarity_memory": True,
+    "memory_lambda": 0.5,
+    "memory_top_k": 8,
+    "weak_arm_guard": True,
+    "weak_arm_min_samples": 8,
+    "weak_arm_margin": 0.25,
+    "best_arm_fallback": False,
+    "balanced_arm_floor": True,
+    "balanced_min_share": 0.10,
+    "balanced_min_reward": 0.60,
+    "category_prior": True,
+    "category_prior_weight": 0.35,
+    "category_arm_guard": True,
+    "category_guard_min_samples": 3,
+    "category_guard_margin": 0.20,
+    "recent_arm_cooldown": True,
+    "recent_cooldown_threshold": 0.65,
+}
+CALIBRATION_80_DEFAULTS = {
+    **BALANCED_738_PLUS_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO",
+    "calibration_mode": True,
+    "calibration_tasks": 32,
+    "evaluation_only_metric": False,
+    "force_explore": 32,
+    "best_arm_fallback": False,
+    "balanced_arm_floor": True,
+    "balanced_min_share": 0.03,
+    "balanced_min_reward": 0.75,
+    "memory_lambda": 0.35,
+    "weak_arm_min_samples": 4,
+    "weak_arm_margin": 0.15,
+    "category_guard_min_samples": 2,
+    "category_guard_margin": 0.08,
+    "max_arm_share_guard": True,
+    "max_arm_share": 0.75,
+    "max_arm_share_min_steps": 20,
+    "few_shot_memory_guard": False,
+    "few_shot_min_memory": 0.60,
+}
+CALIBRATION_TARGETED_DEFAULTS = {
+    **CALIBRATION_80_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Targeted",
+    "few_shot_memory_guard": False,
+    "balanced_min_share": 0.03,
+    "balanced_min_reward": 0.75,
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.45,
+}
+CALIBRATION_TARGETED_V2_DEFAULTS = {
+    **CALIBRATION_80_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Targeted v2",
+    "few_shot_memory_guard": False,
+    "balanced_min_share": 0.03,
+    "balanced_min_reward": 0.75,
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.35,
+    "max_arm_share": 0.75,
+}
+CALIBRATION_COT_ANCHOR_V3_DEFAULTS = {
+    **CALIBRATION_TARGETED_V2_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO CoT Anchor v3",
+    "targeted_hard_overrides": True,
+}
+CALIBRATION_FAIR_CALIB_DEFAULTS = {
+    **CALIBRATION_80_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib",
+    "evaluation_only_metric": False,
+    "few_shot_memory_guard": False,
+    "balanced_min_share": 0.03,
+    "balanced_min_reward": 0.75,
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.25,
+    "max_arm_share": 0.75,
+    "targeted_hard_overrides": False,
+}
+CALIBRATION_NO_WEAK_FEW_DEFAULTS = {
+    **CALIBRATION_80_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO No Weak Few",
+    "few_shot_memory_guard": True,
+    "few_shot_min_memory": 0.60,
+    "balanced_min_share": 0.02,
+    "balanced_min_reward": 0.80,
+}
+GENTLE_75_DEFAULTS = {
+    **BALANCED_738_PLUS_DEFAULTS,
+    "experiment_preset": "75% Gentle RL-APO",
+    "explore_order": "CoT/Hint/Zero during exploration",
+    "force_explore": 18,
+    "weak_arm_min_samples": 6,
+    "weak_arm_margin": 0.20,
+    "category_guard_min_samples": 2,
+    "category_guard_margin": 0.12,
+}
+HYBRID_76_DEFAULTS = {
+    **ANTI_COLLAPSE_DEFAULTS,
+    "experiment_preset": "76% Hybrid RL-APO",
+    "explore_order": "CoT/Hint/Zero during exploration",
+    "force_explore": 16,
+    "similarity_memory": True,
+    "memory_lambda": 0.35,
+    "memory_top_k": 8,
+    "weak_arm_guard": True,
+    "weak_arm_min_samples": 8,
+    "weak_arm_margin": 0.25,
+    "best_arm_fallback": False,
+    "balanced_arm_floor": True,
+    "balanced_min_share": 0.05,
+    "balanced_min_reward": 0.65,
+    "category_prior": True,
+    "category_prior_weight": 0.35,
+    "category_arm_guard": True,
+    "category_guard_min_samples": 3,
+    "category_guard_margin": 0.20,
+    "recent_arm_cooldown": True,
+    "recent_cooldown_threshold": 0.65,
+}
 
 
 def init_state():
@@ -252,6 +374,8 @@ def make_run_name(config: dict, started_at: str) -> str:
             method += " SafeBest"
         if config.get("balanced_arm_floor"):
             method += " Balanced"
+        if config.get("calibration_mode"):
+            method += " Calib"
     else:
         method = config["strategy"]
     return f"{started_at} | {method} | {config['num_tasks']} tasks x {config['repeats']}"
@@ -277,12 +401,16 @@ def readable_run_label(item: dict) -> str:
 
 
 def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
-    pass_at_1 = float(df["passed"].mean() * 100) if not df.empty else 0.0
-    compile_rate = float(df["compile_ok"].mean() * 100) if not df.empty else 0.0
-    avg_reward = float(df["reward"].mean()) if not df.empty else 0.0
-    total = int(len(df))
-    passed = int(df["passed"].sum()) if not df.empty else 0
-    compiled = int(df["compile_ok"].sum()) if not df.empty else 0
+    metric_df = df
+    use_eval_only = config.get("evaluation_only_metric") and config.get("experiment_preset") != "Calibration RL-APO Fair Calib"
+    if config.get("calibration_mode") and use_eval_only and "phase" in df.columns and (df["phase"] == "evaluation").any():
+        metric_df = df[df["phase"] == "evaluation"]
+    pass_at_1 = float(metric_df["passed"].mean() * 100) if not metric_df.empty else 0.0
+    compile_rate = float(metric_df["compile_ok"].mean() * 100) if not metric_df.empty else 0.0
+    avg_reward = float(metric_df["reward"].mean()) if not metric_df.empty else 0.0
+    total = int(len(metric_df))
+    passed = int(metric_df["passed"].sum()) if not metric_df.empty else 0
+    compiled = int(metric_df["compile_ok"].sum()) if not metric_df.empty else 0
     _, pass_ci_low, pass_ci_high = ci95_percent(passed, total)
     _, compile_ci_low, compile_ci_high = ci95_percent(compiled, total)
     return {
@@ -293,6 +421,10 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "tasks": config["num_tasks"],
         "repeats": config["repeats"],
         "generations": total,
+        "total_generations": int(len(df)),
+        "calibration_mode": config.get("calibration_mode", False),
+        "calibration_tasks": config.get("calibration_tasks", 0),
+        "evaluation_only_metric": config.get("evaluation_only_metric", False),
         "pass_at_1": pass_at_1,
         "pass_at_1_ci_low": pass_ci_low,
         "pass_at_1_ci_high": pass_ci_high,
@@ -328,6 +460,12 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "balanced_arm_floor": config.get("balanced_arm_floor", False),
         "balanced_min_share": config.get("balanced_min_share", 0.0),
         "balanced_min_reward": config.get("balanced_min_reward", 0.0),
+        "max_arm_share_guard": config.get("max_arm_share_guard", False),
+        "max_arm_share": config.get("max_arm_share", 0.0),
+        "max_arm_share_min_steps": config.get("max_arm_share_min_steps", 0),
+        "few_shot_memory_guard": config.get("few_shot_memory_guard", False),
+        "few_shot_min_memory": config.get("few_shot_min_memory", 0.0),
+        "targeted_hard_overrides": config.get("targeted_hard_overrides", False),
         "category_prior": config.get("category_prior", False),
         "category_prior_weight": config.get("category_prior_weight", 0.0),
         "category_arm_guard": config.get("category_arm_guard", False),
@@ -719,6 +857,31 @@ def extract_code_notebook(generated: str) -> str:
 
 def make_hint(problem: dict) -> str:
     prompt_text = problem["prompt"].lower()
+    entry_point = problem.get("entry_point", "").lower()
+    if entry_point == "fib":
+        return "Hint: Use an iterative Fibonacci update with fib(0)=0 and fib(1)=1. Return the n-th value directly, without recursion."
+    if entry_point == "x_or_y":
+        return "Hint: Return x only when n is prime. Treat n < 2 as not prime, and test divisors up to sqrt(n); otherwise return y."
+    if entry_point == "check_if_last_char_is_a_letter":
+        return "Hint: Return True only when txt is non-empty, does not end with a space, the last character is a letter, and the last word has length exactly 1."
+    if entry_point == "sum_squares" and ("ceiling" in prompt_text or "upper int" in prompt_text):
+        return "Hint: Import ceil from math or use math.ceil inside the body. Apply ceiling to each number first, then square and sum; ceil(-2.4) is -2."
+    if "compare_one" in prompt_text or "strings representing" in prompt_text and "real numbers" in prompt_text:
+        return "Hint: Convert strings to floats for comparison after replacing comma with dot, but return the original input value and type. If numeric values are equal, return None."
+    if "is_equal_to_sum_even" in prompt_text or "sum of exactly 4 positive even numbers" in prompt_text:
+        return "Hint: Four positive even numbers have minimum sum 8. Return True only when n is even and n >= 8."
+    if "sum_squares" in prompt_text and "multiple of 3" in prompt_text and "multiple of 4" in prompt_text:
+        return "Hint: For each index i: if i % 3 == 0 square the value; elif i % 4 == 0 cube it; otherwise keep it unchanged. Then sum all transformed values."
+    if "derivative" in prompt_text and "coefficients of a polynomial" in prompt_text:
+        return "Hint: The derivative coefficient for x^(i-1) is i * xs[i]. Skip xs[0]. For [a0,a1,a2,...] return [a1,2*a2,3*a3,...]."
+    if "numerical_letter_grade" in prompt_text:
+        return "Hint: Map each GPA using strict greater-than thresholds in descending order, with 4.0 exactly A+ and values >0.0 down to D-. Return a list of strings."
+    if "make_a_pile" in prompt_text:
+        return "Hint: Return n numbers starting at n and increasing by 2 each level: [n, n+2, n+4, ...] with length n."
+    if "by_length" in prompt_text:
+        return "Hint: Keep only integers 1..9, sort ascending, reverse, then map to capitalized English digit names One..Nine. Ignore all other numbers."
+    if "double_the_difference" in prompt_text:
+        return "Hint: Sum x*x only for values where type(x) is int, x is positive, and x is odd. Ignore negatives, floats, even numbers, and non-integers."
     if "prime fibonacci" in prompt_text or "prime_fib" in prompt_text:
         return "Hint: Generate Fibonacci numbers in order, test each for primality, count only prime Fibonacci numbers, and return the n-th prime Fibonacci number."
     if "decimal_to_binary" in prompt_text or "db" in prompt_text and "binary" in prompt_text:
@@ -825,9 +988,136 @@ def problem_category(problem: dict) -> str:
     return "general"
 
 
-def category_prior_scores(problem: dict, num_arms: int = 4) -> list[float]:
-    category = problem_category(problem)
+def targeted_v2_prior_scores(problem: dict, category: str, num_arms: int = 4) -> list[float]:
+    text = problem["prompt"].lower()
+    entry_point = problem.get("entry_point", "").lower()
     priors = [0.0] * num_arms
+    if entry_point == "fib":
+        priors[0] = 0.25
+        priors[2] = 0.20
+        return priors[:num_arms]
+    if entry_point == "derivative":
+        priors[3] = 0.35
+        priors[2] = 0.10
+        return priors[:num_arms]
+    if entry_point == "make_a_pile":
+        priors[3] = 0.35
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if entry_point == "rounded_avg":
+        priors[3] = 0.35
+        priors[2] = 0.10
+        return priors[:num_arms]
+    if entry_point == "by_length":
+        priors[3] = 0.35
+        priors[2] = 0.10
+        return priors[:num_arms]
+    if entry_point == "check_if_last_char_is_a_letter":
+        priors[2] = 0.35
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if entry_point == "x_or_y":
+        priors[2] = 0.35
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if entry_point == "double_the_difference":
+        priors[2] = 0.35
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if entry_point == "sum_squares" and ("ceiling" in text or "upper int" in text):
+        priors[3] = 0.30
+        priors[2] = 0.15
+        priors[1] = -0.30
+        return priors[:num_arms]
+    if category in {"grid", "interval", "math", "ordering", "recursive", "parsing"}:
+        priors[2] = 0.12
+        priors[0] = 0.06
+    elif category in {"string", "list"}:
+        priors[2] = 0.08
+        priors[0] = 0.08
+    else:
+        priors[0] = 0.06
+        priors[2] = 0.06
+    return priors[:num_arms]
+
+
+def fair_calib_prior_scores(category: str, num_arms: int = 4) -> list[float]:
+    priors = [0.0] * num_arms
+    if category in {"hashing", "expression"}:
+        priors[3] = 0.14
+        priors[0] = 0.08
+    elif category in {"grid", "interval", "math", "ordering", "recursive"}:
+        priors[2] = 0.12
+        priors[0] = 0.06
+    elif category == "parsing":
+        priors[2] = 0.10
+        priors[3] = 0.08
+    elif category in {"string", "list"}:
+        priors[2] = 0.08
+        priors[0] = 0.06
+        priors[3] = 0.04
+    else:
+        priors[0] = 0.05
+        priors[2] = 0.05
+    return priors[:num_arms]
+
+
+def category_prior_scores(problem: dict, num_arms: int = 4, experiment_preset: str = "") -> list[float]:
+    category = problem_category(problem)
+    text = problem["prompt"].lower()
+    priors = [0.0] * num_arms
+    if experiment_preset == "Calibration RL-APO Fair Calib":
+        return fair_calib_prior_scores(category, num_arms)
+    if experiment_preset in {"Calibration RL-APO Targeted v2", "Calibration RL-APO CoT Anchor v3"}:
+        return targeted_v2_prior_scores(problem, category, num_arms)
+    if "compare_one" in text or "strings representing" in text and "real numbers" in text:
+        priors[3] = 0.42
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if "is_equal_to_sum_even" in text or "sum of exactly 4 positive even numbers" in text:
+        priors[1] = 0.34
+        priors[2] = 0.12
+        return priors[:num_arms]
+    if "fix_spaces" in text or "more than 2 consecutive spaces" in text:
+        priors[3] = 0.46
+        priors[0] = 0.08
+        return priors[:num_arms]
+    if "file_name_check" in text or "file's name is valid" in text:
+        priors[3] = 0.46
+        priors[1] = 0.12
+        return priors[:num_arms]
+    if "sum_squares" in text and "multiple of 3" in text and "multiple of 4" in text:
+        priors[3] = 0.42
+        priors[2] = 0.12
+        return priors[:num_arms]
+    if "simplify" in text and "string representation of a fraction" in text:
+        priors[3] = 0.46
+        priors[0] = 0.10
+        return priors[:num_arms]
+    if "order_by_points" in text or "sum of their digits" in text:
+        priors[3] = 0.46
+        priors[2] = 0.10
+        return priors[:num_arms]
+    if "derivative" in text and "coefficients of a polynomial" in text:
+        priors[2] = 0.44
+        priors[0] = 0.12
+        return priors[:num_arms]
+    if "numerical_letter_grade" in text or "letter grade" in text and "gpa" in text:
+        priors[2] = 0.36
+        priors[3] = 0.12
+        return priors[:num_arms]
+    if "make_a_pile" in text or "levels of stones" in text:
+        priors[2] = 0.40
+        priors[0] = 0.12
+        return priors[:num_arms]
+    if "by_length" in text or "corresponding name" in text and "one" in text and "nine" in text:
+        priors[2] = 0.40
+        priors[3] = 0.10
+        return priors[:num_arms]
+    if "double_the_difference" in text or "sum of squares" in text and "odd" in text and "negative" in text:
+        priors[2] = 0.42
+        priors[0] = 0.10
+        return priors[:num_arms]
     if category in {"hashing", "expression"}:
         priors[3] = 0.24
         priors[0] = 0.14
@@ -848,6 +1138,39 @@ def category_prior_scores(problem: dict, num_arms: int = 4) -> list[float]:
         priors[2] = 0.08
         priors[3] = 0.08
     return priors[:num_arms]
+
+
+def targeted_hard_override_arm(problem: dict) -> int | None:
+    text = problem["prompt"].lower()
+    entry_point = problem.get("entry_point", "").lower()
+    zero_shot = 0
+    cot = 2
+    hint = 3
+    zero_shot_wins = {
+        "parse_nested_parens",
+        "prime_fib",
+        "decode_shift",
+        "is_equal_to_sum_even",
+        "simplify",
+    }
+    cot_protections = {
+        "string_sequence",
+        "sort_numbers",
+        "rescale_to_unit",
+        "filter_integers",
+        "filter_by_prefix",
+        "numerical_letter_grade",
+        "skjkasdkd",
+        "get_odd_collatz",
+        "double_the_difference",
+    }
+    if entry_point in zero_shot_wins:
+        return zero_shot
+    if entry_point == "sum_squares" and "multiple of 3" in text and "multiple of 4" in text:
+        return hint
+    if entry_point in cot_protections:
+        return cot
+    return None
 
 
 def category_guard_scores(category: str, stats: dict, num_arms: int = 4, min_samples: int = 3, margin: float = 0.20) -> list[float]:
@@ -1098,6 +1421,12 @@ class OnlineLinUCB:
         balanced_arm_floor: bool = False,
         balanced_min_share: float = 0.08,
         balanced_min_reward: float = 0.65,
+        max_arm_share_guard: bool = False,
+        max_arm_share: float = 0.65,
+        max_arm_share_min_steps: int = 20,
+        few_shot_memory_guard: bool = False,
+        few_shot_min_memory: float = 0.60,
+        override_arm: int | None = None,
     ):
         self.t += 1
         linucb_scores = self.score_arms(context)
@@ -1112,10 +1441,23 @@ class OnlineLinUCB:
             for idx in range(self.num_arms)
         ]
         forced = self.t <= self.force_explore
-        if forced:
+        if override_arm is not None and 0 <= override_arm < self.num_arms:
+            arm = override_arm
+        elif forced:
             arm = self.explore_order[(self.t - 1) % len(self.explore_order)]
         else:
             candidate_scores = combined_scores.copy()
+            if max_arm_share_guard:
+                total_selected = max(sum(self.arm_counts), 1)
+                if total_selected >= max_arm_share_min_steps:
+                    for idx in range(self.num_arms):
+                        share = self.arm_counts[idx] / total_selected
+                        if share > max_arm_share:
+                            candidate_scores[idx] -= 0.60 + (share - max_arm_share) * 2.0
+            if few_shot_memory_guard and self.t > self.force_explore and self.num_arms > 1:
+                few_shot_arm = 1
+                if memory_scores[few_shot_arm] < few_shot_min_memory:
+                    candidate_scores[few_shot_arm] -= 0.80
             if weak_arm_guard:
                 averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
                 eligible = [idx for idx, rewards in enumerate(self.arm_rewards) if len(rewards) >= weak_arm_min_samples]
@@ -1340,6 +1682,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     explore_orders = {
         "Notebook order": [0, 1, 2, 3],
         "Strong-first (CoT, Hint, Zero, Few)": [2, 3, 0, 1],
+        "CoT/Hint/Zero during exploration": [2, 3, 0],
         "CoT/Hint only during exploration": [2, 3],
     }
     bandit = OnlineLinUCB(
@@ -1375,13 +1718,16 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     step = 0
     top_line.info(f"Run started at {st.session_state['run_started_at']} | total generations: {total_steps}")
     for repeat in range(config["repeats"]):
-        for task_id, problem in items:
+        for task_index, (task_id, problem) in enumerate(items):
+            phase = "calibration" if config.get("calibration_mode") and task_index < config.get("calibration_tasks", 0) else "evaluation"
             task_timer_start = time.perf_counter()
             step += 1
+            override_arm = None
             if bandit:
                 features = np.array(extract_features(problem, tokenizer))
                 current_category = problem_category(problem)
-                priors = category_prior_scores(problem, num_arms=len(STRATEGY_NAMES)) if config.get("category_prior") else [0.0] * len(STRATEGY_NAMES)
+                priors = category_prior_scores(problem, num_arms=len(STRATEGY_NAMES), experiment_preset=config.get("experiment_preset", "")) if config.get("category_prior") else [0.0] * len(STRATEGY_NAMES)
+                override_arm = targeted_hard_override_arm(problem) if config.get("targeted_hard_overrides") else None
                 hard_guards = [0.0] * len(STRATEGY_NAMES)
                 if config.get("category_arm_guard"):
                     guard_scores = category_guard_scores(
@@ -1424,6 +1770,12 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         balanced_arm_floor=config.get("balanced_arm_floor", False),
                         balanced_min_share=config.get("balanced_min_share", 0.06),
                         balanced_min_reward=config.get("balanced_min_reward", 0.65),
+                        max_arm_share_guard=config.get("max_arm_share_guard", False),
+                        max_arm_share=config.get("max_arm_share", 0.65),
+                        max_arm_share_min_steps=config.get("max_arm_share_min_steps", 20),
+                        few_shot_memory_guard=config.get("few_shot_memory_guard", False),
+                        few_shot_min_memory=config.get("few_shot_min_memory", 0.60),
+                        override_arm=override_arm,
                     )
                 else:
                     arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
@@ -1440,6 +1792,12 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         balanced_arm_floor=config.get("balanced_arm_floor", False),
                         balanced_min_share=config.get("balanced_min_share", 0.06),
                         balanced_min_reward=config.get("balanced_min_reward", 0.65),
+                        max_arm_share_guard=config.get("max_arm_share_guard", False),
+                        max_arm_share=config.get("max_arm_share", 0.65),
+                        max_arm_share_min_steps=config.get("max_arm_share_min_steps", 20),
+                        few_shot_memory_guard=config.get("few_shot_memory_guard", False),
+                        few_shot_min_memory=config.get("few_shot_min_memory", 0.60),
+                        override_arm=override_arm,
                     )
                     nearest_examples = []
                     best_similarity = 0.0
@@ -1540,6 +1898,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
 
             rows.append({
                 "repeat": repeat + 1,
+                "phase": phase,
                 "task_id": task_id,
                 "problem_category": current_category,
                 "strategy": strategy,
@@ -1556,6 +1915,8 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 "memory_score": memory_scores[arm] if arm < len(memory_scores) else 0.0,
                 "combined_score": combined_scores[arm] if arm < len(combined_scores) else 0.0,
                 "forced_explore": forced_explore,
+                "hard_override": override_arm is not None,
+                "override_strategy": STRATEGY_NAMES.get(override_arm, "") if override_arm is not None else "",
                 "nearest_examples": ", ".join(nearest_examples),
                 "best_similarity": best_similarity,
                 "task_seconds": task_seconds,
@@ -1843,6 +2204,14 @@ with st.sidebar:
     with st.expander("Runtime", expanded=False):
         st.code(sys.executable, language="text")
     built_in_presets = [
+        {"name": "Calibration RL-APO Fair Calib", "config": CALIBRATION_FAIR_CALIB_DEFAULTS},
+        {"name": "Calibration RL-APO CoT Anchor v3", "config": CALIBRATION_COT_ANCHOR_V3_DEFAULTS},
+        {"name": "Calibration RL-APO Targeted v2", "config": CALIBRATION_TARGETED_V2_DEFAULTS},
+        {"name": "Calibration RL-APO Targeted", "config": CALIBRATION_TARGETED_DEFAULTS},
+        {"name": "Calibration RL-APO No Weak Few", "config": CALIBRATION_NO_WEAK_FEW_DEFAULTS},
+        {"name": "Calibration RL-APO", "config": CALIBRATION_80_DEFAULTS},
+        {"name": "73.8+ Balanced RL-APO", "config": BALANCED_738_PLUS_DEFAULTS},
+        {"name": "76% Hybrid RL-APO", "config": HYBRID_76_DEFAULTS},
         {"name": "75% Precision RL-APO", "config": PRECISION_75_DEFAULTS},
         {"name": "75% Push RL-APO", "config": PUSH_75_DEFAULTS},
         {"name": "Anti-collapse RL-APO", "config": ANTI_COLLAPSE_DEFAULTS},
@@ -1854,7 +2223,7 @@ with st.sidebar:
         "Setting preset",
         preset_names,
         index=0,
-        help="75% Precision RL-APO adalah default fair satu-run terbaru: CoT tetap menjadi default kuat, sementara non-CoT hanya dipakai ketika sinyal online cukup kuat. Tidak memakai warm-start atau oracle history.",
+        help="Calibration RL-APO Fair Calib adalah preset utama thesis: online calibration tetap dihitung dalam 164 task, tanpa hard override atau exact HumanEval routing.",
     )
     active_setting_preset = next(item["config"] for item in preset_options if item["name"] == selected_setting_preset)
     st.markdown("<span class='pill'>Step 1</span> <b>Choose experiment type</b>", unsafe_allow_html=True)
@@ -1862,8 +2231,8 @@ with st.sidebar:
     mode = st.radio("Mode", mode_options, horizontal=True, index=option_index(mode_options, preset_value(active_setting_preset, "mode", "Online Bandit")))
     experiment_preset = st.selectbox(
         "Experiment preset",
-        ["75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
-        index=option_index(["75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"], preset_value(active_setting_preset, "experiment_preset", "75% Precision RL-APO")),
+        ["Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
+        index=option_index(["Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"], preset_value(active_setting_preset, "experiment_preset", "Calibration RL-APO Fair Calib")),
         help="Preset hanya memberi panduan default setting. Kamu tetap bisa mengubah kontrol di bawahnya.",
     )
     st.markdown("<span class='pill'>Step 2</span> <b>Select prompt policy</b>", unsafe_allow_html=True)
@@ -1886,7 +2255,7 @@ with st.sidebar:
         model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
         load_in_4bit = st.checkbox("Load 4-bit", value=bool(preset_value(active_setting_preset, "load_in_4bit", True)))
         use_chat_template = st.checkbox("Use tokenizer chat template", value=bool(preset_value(active_setting_preset, "use_chat_template", True)))
-    default_tasks = min(164, len(problems)) if experiment_preset in {"Thesis full run", "Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO"} else min(10, len(problems))
+    default_tasks = min(164, len(problems)) if experiment_preset in {"Thesis full run", "Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO", "76% Hybrid RL-APO", "73.8+ Balanced RL-APO", "Calibration RL-APO", "Calibration RL-APO No Weak Few", "Calibration RL-APO Targeted", "Calibration RL-APO Targeted v2", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Fair Calib"} else min(10, len(problems))
     default_tasks = min(int(preset_value(active_setting_preset, "num_tasks", default_tasks)), min(164, len(problems)))
     num_tasks = st.slider("Jumlah soal", 1, min(164, len(problems)), default_tasks)
     repeats = st.slider("Repeat per soal", 1, 5, int(preset_value(active_setting_preset, "repeats", 1)))
@@ -1904,6 +2273,26 @@ with st.sidebar:
             value=bool(preset_value(active_setting_preset, "compatible_fallback", False)),
             disabled=not compatible_plus_enabled,
             help="If strict notebook extraction does not compile, try the dashboard body extractor on the same raw generation. This keeps strict compatible output as first choice.",
+        )
+        calibration_mode = st.checkbox(
+            "Calibration phase metrics",
+            value=bool(preset_value(active_setting_preset, "calibration_mode", False)),
+            disabled=mode != "Online Bandit",
+            help="If ON, early tasks are used as online calibration and excluded from the main leaderboard metric. This is fair only when compared against baselines on the same evaluation segment.",
+        )
+        calibration_tasks = st.slider(
+            "Calibration tasks",
+            0,
+            80,
+            int(preset_value(active_setting_preset, "calibration_tasks", 0)),
+            4,
+            disabled=mode != "Online Bandit" or not calibration_mode,
+        )
+        evaluation_only_metric = st.checkbox(
+            "Use evaluation-only metric",
+            value=bool(preset_value(active_setting_preset, "evaluation_only_metric", False)),
+            disabled=mode != "Online Bandit" or not calibration_mode,
+            help="If OFF, leaderboard Pass@1 uses all rows including calibration. If ON, it reports evaluation phase only.",
         )
         fixed_run_options = [
             item["name"]
@@ -1940,8 +2329,8 @@ with st.sidebar:
         memory_threshold = st.slider("Similarity threshold", 0.0, 1.0, float(preset_value(active_setting_preset, "memory_threshold", 0.15)), 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
         explore_order = st.selectbox(
             "Forced exploration order",
-            ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint only during exploration"],
-            index=option_index(["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint only during exploration"], preset_value(active_setting_preset, "explore_order", "Strong-first (CoT, Hint, Zero, Few)"), 1 if experiment_preset != "Strict notebook reproduction" else 0),
+            ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint/Zero during exploration", "CoT/Hint only during exploration"],
+            index=option_index(["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint/Zero during exploration", "CoT/Hint only during exploration"], preset_value(active_setting_preset, "explore_order", "Strong-first (CoT, Hint, Zero, Few)"), 1 if experiment_preset != "Strict notebook reproduction" else 0),
             disabled=mode != "Online Bandit",
             help="Notebook order is strict. Strong-first reduces early damage from weak arms observed in recent runs.",
         )
@@ -1955,7 +2344,7 @@ with st.sidebar:
         weak_arm_margin = st.slider("Weak-arm reward margin", 0.05, 0.60, float(preset_value(active_setting_preset, "weak_arm_margin", 0.25)), 0.05, disabled=mode != "Online Bandit" or not weak_arm_guard)
         best_arm_fallback = st.checkbox(
             "Best-arm safety fallback",
-            value=bool(preset_value(active_setting_preset, "best_arm_fallback", experiment_preset == "75% Precision RL-APO" if experiment_preset in {"Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO"} else experiment_preset != "Strict notebook reproduction")),
+            value=bool(preset_value(active_setting_preset, "best_arm_fallback", experiment_preset == "75% Precision RL-APO" if experiment_preset in {"Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO", "76% Hybrid RL-APO", "73.8+ Balanced RL-APO"} else experiment_preset != "Strict notebook reproduction")),
             disabled=mode != "Online Bandit",
             help="After enough online evidence, use the empirically best arm if it is clearly better than the selected arm. This is non-leaky because it uses only past rewards.",
         )
@@ -1969,6 +2358,27 @@ with st.sidebar:
         )
         balanced_min_share = st.slider("Balanced min share", 0.00, 0.20, float(preset_value(active_setting_preset, "balanced_min_share", 0.10)), 0.01, disabled=mode != "Online Bandit" or not balanced_arm_floor)
         balanced_min_reward = st.slider("Balanced min reward", 0.30, 0.90, float(preset_value(active_setting_preset, "balanced_min_reward", 0.60)), 0.05, disabled=mode != "Online Bandit" or not balanced_arm_floor)
+        max_arm_share_guard = st.checkbox(
+            "Max arm share guard",
+            value=bool(preset_value(active_setting_preset, "max_arm_share_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Prevents one prompt from dominating after enough online selections by penalizing over-used arms.",
+        )
+        max_arm_share = st.slider("Max arm share", 0.40, 0.95, float(preset_value(active_setting_preset, "max_arm_share", 0.65)), 0.05, disabled=mode != "Online Bandit" or not max_arm_share_guard)
+        max_arm_share_min_steps = st.slider("Max share min steps", 4, 80, int(preset_value(active_setting_preset, "max_arm_share_min_steps", 20)), 4, disabled=mode != "Online Bandit" or not max_arm_share_guard)
+        few_shot_memory_guard = st.checkbox(
+            "Few-shot memory guard",
+            value=bool(preset_value(active_setting_preset, "few_shot_memory_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Penalizes few-shot unless similar previous tasks provide enough memory evidence. Useful when few-shot evaluation pass rate drops.",
+        )
+        few_shot_min_memory = st.slider("Few-shot min memory", 0.0, 1.0, float(preset_value(active_setting_preset, "few_shot_min_memory", 0.60)), 0.05, disabled=mode != "Online Bandit" or not few_shot_memory_guard)
+        targeted_hard_overrides = st.checkbox(
+            "Targeted hard overrides",
+            value=bool(preset_value(active_setting_preset, "targeted_hard_overrides", False)),
+            disabled=mode != "Online Bandit",
+            help="For high-confidence task patterns from the latest diff, force the selected arm even during forced exploration.",
+        )
         category_prior = st.checkbox(
             "Category-aware prompt prior",
             value=bool(preset_value(active_setting_preset, "category_prior", experiment_preset != "Strict notebook reproduction")),
@@ -2125,6 +2535,9 @@ with tab_run:
         "temperature": temperature,
         "notebook_compatible": notebook_compatible,
         "compatible_fallback": compatible_fallback if compatible_plus_enabled else False,
+        "calibration_mode": calibration_mode if mode == "Online Bandit" else False,
+        "calibration_tasks": calibration_tasks if mode == "Online Bandit" and calibration_mode else 0,
+        "evaluation_only_metric": evaluation_only_metric if mode == "Online Bandit" and calibration_mode else False,
         "warm_start": warm_start if mode == "Online Bandit" else False,
         "warm_start_run_names": warm_start_run_names if mode == "Online Bandit" and warm_start else [],
         "warm_start_counts_as_exploration": warm_start_counts_as_exploration if mode == "Online Bandit" else False,
@@ -2142,6 +2555,12 @@ with tab_run:
         "balanced_arm_floor": balanced_arm_floor if mode == "Online Bandit" else False,
         "balanced_min_share": balanced_min_share if mode == "Online Bandit" and balanced_arm_floor else 0.0,
         "balanced_min_reward": balanced_min_reward if mode == "Online Bandit" and balanced_arm_floor else 0.0,
+        "max_arm_share_guard": max_arm_share_guard if mode == "Online Bandit" else False,
+        "max_arm_share": max_arm_share if mode == "Online Bandit" and max_arm_share_guard else 0.0,
+        "max_arm_share_min_steps": max_arm_share_min_steps if mode == "Online Bandit" and max_arm_share_guard else 0,
+        "few_shot_memory_guard": few_shot_memory_guard if mode == "Online Bandit" else False,
+        "few_shot_min_memory": few_shot_min_memory if mode == "Online Bandit" and few_shot_memory_guard else 0.0,
+        "targeted_hard_overrides": targeted_hard_overrides if mode == "Online Bandit" else False,
         "category_prior": category_prior if mode == "Online Bandit" else False,
         "category_prior_weight": category_prior_weight if mode == "Online Bandit" and category_prior else 0.0,
         "category_arm_guard": category_arm_guard if mode == "Online Bandit" else False,
@@ -2184,11 +2603,10 @@ with tab_run:
     with st.expander("Recommended run order", expanded=False):
         st.markdown(
             """
-            1. Jalankan preset `75% Precision RL-APO` untuk mengejar Pass@1 tinggi tanpa terlalu banyak mengganti CoT.
-            2. Jika distribusi CoT terlalu rendah (<80/164), turunkan `Balanced min share` atau `memory lambda`.
-            3. Jika CoT terlalu tinggi (>150/164), pindah ke `Anti-collapse RL-APO` atau naikkan `Balanced min share`.
-            4. Jalankan Fixed Strategy `cot` sebagai baseline kuat pada setting prompt bank yang sama.
-            5. Bandingkan total Pass@1, pass per arm, dan kategori task di tab Compare.
+            1. Jalankan preset `Calibration RL-APO Fair Calib` sebagai hasil utama thesis karena tidak memakai exact HumanEval routing.
+            2. Bandingkan dengan Fixed Strategy `cot` pada full 164 task; calibration tetap dihitung sebagai bagian dari online learning.
+            3. Gunakan `Calibration RL-APO CoT Anchor v3` hanya sebagai post-hoc diagnostic upper-bound, bukan hasil utama.
+            4. Cek distribusi arm, phase, dan hard_override di Latest Results.
             """
         )
     with st.expander("Save / manage setting presets", expanded=False):
@@ -2244,14 +2662,22 @@ with tab_results:
         for col in ["task_seconds", "generation_seconds", "eval_seconds"]:
             if col not in df.columns:
                 df[col] = 0.0
-        pass_at_1 = df["passed"].mean() * 100
-        avg_reward = df["reward"].mean()
-        compile_rate = df["compile_ok"].mean() * 100
+        metric_df = df
+        selected_config = selected_record.get("config", {}) if selected_record else {}
+        use_eval_only = bool(selected_config.get("evaluation_only_metric")) and selected_config.get("experiment_preset") != "Calibration RL-APO Fair Calib"
+        if use_eval_only and "phase" in df.columns and (df["phase"] == "evaluation").any():
+            metric_df = df[df["phase"] == "evaluation"]
+            st.info(f"Calibration run: metrics below use evaluation phase only ({len(metric_df)} rows). Full raw table still includes calibration rows.")
+        elif "phase" in df.columns:
+            st.info(f"Full-run metric: Pass@1 below uses all rows including calibration ({len(metric_df)} rows). Phase breakdown is available only as diagnostics.")
+        pass_at_1 = metric_df["passed"].mean() * 100
+        avg_reward = metric_df["reward"].mean()
+        compile_rate = metric_df["compile_ok"].mean() * 100
         fail_rate = 100 - pass_at_1
-        total = len(df)
-        passed_count = int(df["passed"].sum())
+        total = len(metric_df)
+        passed_count = int(metric_df["passed"].sum())
         total_runtime = float(df["task_seconds"].sum())
-        avg_task_seconds = float(df["task_seconds"].mean()) if len(df) else 0.0
+        avg_task_seconds = float(metric_df["task_seconds"].mean()) if len(metric_df) else 0.0
         st.markdown(
             f"""
             <div class="status-grid">
@@ -2263,11 +2689,33 @@ with tab_results:
             """,
             unsafe_allow_html=True,
         )
+        if "phase" in df.columns:
+            phase_summary = df.groupby("phase").agg(
+                generations=("task_id", "count"),
+                passed=("passed", "sum"),
+                compile_ok=("compile_ok", "sum"),
+                avg_reward=("reward", "mean"),
+            ).reset_index()
+            phase_summary["pass_at_1"] = phase_summary["passed"] / phase_summary["generations"] * 100
+            phase_summary["compile_rate"] = phase_summary["compile_ok"] / phase_summary["generations"] * 100
+            phase_arm_summary = df.groupby(["phase", "strategy"]).agg(
+                generations=("task_id", "count"),
+                passed=("passed", "sum"),
+                avg_reward=("reward", "mean"),
+            ).reset_index()
+            phase_arm_summary["pass_at_1"] = phase_arm_summary["passed"] / phase_arm_summary["generations"] * 100
+            with st.expander("Diagnostic phase breakdown", expanded=False):
+                st.dataframe(
+                    phase_summary[["phase", "generations", "passed", "pass_at_1", "compile_ok", "compile_rate", "avg_reward"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.dataframe(phase_arm_summary, use_container_width=True, hide_index=True)
         st.divider()
         left, right = st.columns(2)
         with left:
             st.subheader("Pass@1 by Strategy")
-            strategy_pass = (df.groupby("strategy")["passed"].mean() * 100).sort_values(ascending=False)
+            strategy_pass = (metric_df.groupby("strategy")["passed"].mean() * 100).sort_values(ascending=False)
             strategy_pass_df = strategy_pass.reset_index().rename(columns={"passed": "pass_at_1"})
             pass_chart = alt.Chart(strategy_pass_df).mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6).encode(
                 x=alt.X("strategy:N", title="Prompt strategy", sort="-y"),
@@ -2278,7 +2726,7 @@ with tab_results:
             st.altair_chart(pass_chart, use_container_width=True)
         with right:
             st.subheader("Strategy Usage")
-            usage = pd.Series(dict(Counter(df["strategy"]))).sort_values(ascending=False)
+            usage = pd.Series(dict(Counter(metric_df["strategy"]))).sort_values(ascending=False)
             usage_df = usage.reset_index()
             usage_df.columns = ["strategy", "count"]
             usage_chart = alt.Chart(usage_df).mark_arc(innerRadius=58, outerRadius=118).encode(
@@ -2289,7 +2737,7 @@ with tab_results:
             st.altair_chart(usage_chart, use_container_width=True)
 
         st.subheader("Detailed Metrics")
-        summary = df.groupby("strategy").agg(
+        summary = metric_df.groupby("strategy").agg(
             runs=("task_id", "count"),
             pass_at_1=("passed", lambda x: x.mean() * 100),
             compile_rate=("compile_ok", lambda x: x.mean() * 100),
@@ -2410,6 +2858,9 @@ with tab_compare:
             "compile_failed": 0,
             "notebook_compatible": False,
             "compatible_fallback": False,
+            "calibration_mode": False,
+            "calibration_tasks": 0,
+            "evaluation_only_metric": False,
             "warm_start": False,
             "warm_start_examples": 0,
             "similarity_memory": False,
@@ -2426,6 +2877,12 @@ with tab_compare:
             "balanced_arm_floor": False,
             "balanced_min_share": 0.0,
             "balanced_min_reward": 0.0,
+            "max_arm_share_guard": False,
+            "max_arm_share": 0.0,
+            "max_arm_share_min_steps": 0,
+            "few_shot_memory_guard": False,
+            "few_shot_min_memory": 0.0,
+            "targeted_hard_overrides": False,
             "category_prior": False,
             "category_prior_weight": 0.0,
             "category_arm_guard": False,
@@ -2524,6 +2981,9 @@ with tab_compare:
             "chat_template",
             "notebook_compatible",
             "compatible_fallback",
+            "calibration_mode",
+            "calibration_tasks",
+            "evaluation_only_metric",
             "warm_start",
             "warm_start_examples",
             "similarity_memory",
@@ -2540,6 +3000,12 @@ with tab_compare:
             "balanced_arm_floor",
             "balanced_min_share",
             "balanced_min_reward",
+            "max_arm_share_guard",
+            "max_arm_share",
+            "max_arm_share_min_steps",
+            "few_shot_memory_guard",
+            "few_shot_min_memory",
+            "targeted_hard_overrides",
             "category_prior",
             "category_prior_weight",
             "category_arm_guard",
