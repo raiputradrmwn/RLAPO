@@ -194,6 +194,144 @@ CALIBRATION_FAIR_CALIB_DEFAULTS = {
     "max_arm_share": 0.75,
     "targeted_hard_overrides": False,
 }
+CALIBRATION_FAIR_COT_PRIOR_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair CoT-Prior",
+    "force_explore": 24,
+    "explore_order": "CoT-heavy fair exploration",
+    "memory_lambda": 0.30,
+    "category_prior_weight": 0.30,
+    "few_shot_memory_guard": True,
+    "few_shot_min_memory": 0.55,
+    "max_arm_share": 0.80,
+    "cot_anchor_guard": True,
+    "cot_anchor_margin": 0.08,
+    "cot_anchor_memory_threshold": 0.75,
+}
+CALIBRATION_FAIR_CALIB_V2_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v2",
+    "force_explore": 28,
+    "explore_order": "Balanced fair exploration",
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.22,
+    "max_arm_share": 0.62,
+    "few_shot_memory_guard": True,
+    "few_shot_min_memory": 0.65,
+    "weak_arm_guard": False,
+    "cot_anchor_guard": False,
+    "soft_reliability_guard": True,
+    "soft_reliability_min_samples": 6,
+    "soft_reliability_margin": 0.18,
+    "soft_reliability_penalty": 0.35,
+}
+CALIBRATION_FAIR_CALIB_V21_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V2_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v2.1",
+    "arm_share_soft_guard": True,
+    "arm_share_min_steps": 40,
+    "arm_share_zero_shot_cap": 0.45,
+    "arm_share_few_shot_cap": 0.20,
+    "arm_share_cot_cap": 0.55,
+    "arm_share_hint_cap": 0.50,
+    "arm_share_penalty": 0.45,
+}
+CALIBRATION_FAIR_CALIB_V22_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V21_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v2.2",
+    "few_shot_guard_min_samples": 8,
+    "few_shot_probe_guard": True,
+    "few_shot_probe_min_samples": 8,
+    "few_shot_probe_until_step": 80,
+    "few_shot_probe_margin": 0.12,
+    "few_shot_probe_cooldown": 4,
+}
+FAIR_130_CANDIDATE_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V22_DEFAULTS,
+    "experiment_preset": "Fair 130 Candidate",
+    "prompt_bank": "Problem-type aware prompts",
+    "force_explore": 28,
+    "explore_order": "Balanced fair exploration",
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.22,
+    "category_guard_min_samples": 2,
+    "category_guard_margin": 0.12,
+    "max_arm_share": 0.62,
+    "few_shot_min_memory": 0.65,
+    "few_shot_guard_min_samples": 8,
+    "few_shot_probe_min_samples": 8,
+    "few_shot_probe_until_step": 80,
+    "few_shot_probe_margin": 0.12,
+    "soft_reliability_min_samples": 6,
+    "soft_reliability_margin": 0.18,
+    "soft_reliability_penalty": 0.35,
+    "arm_share_zero_shot_cap": 0.45,
+    "arm_share_few_shot_cap": 0.20,
+    "arm_share_cot_cap": 0.55,
+    "arm_share_hint_cap": 0.50,
+    "arm_share_penalty": 0.45,
+    "targeted_hard_overrides": False,
+}
+CALIBRATION_FAIR_CALIB_V23_DEFAULTS = {
+    **FAIR_130_CANDIDATE_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v2.3",
+    "prompt_bank": "Problem-type aware prompts",
+    "force_explore": 28,
+    "explore_order": "Balanced fair exploration",
+    "memory_lambda": 0.35,
+    "category_prior_weight": 0.22,
+    "category_guard_min_samples": 2,
+    "category_guard_margin": 0.12,
+    "max_arm_share": 0.62,
+    "few_shot_memory_guard": True,
+    "few_shot_min_memory": 0.65,
+    "few_shot_guard_min_samples": 8,
+    "few_shot_probe_guard": True,
+    "few_shot_probe_min_samples": 8,
+    "few_shot_probe_until_step": 80,
+    "few_shot_probe_margin": 0.12,
+    "few_shot_probe_cooldown": 4,
+    "weak_arm_guard": False,
+    "soft_reliability_guard": True,
+    "soft_reliability_min_samples": 6,
+    "soft_reliability_margin": 0.18,
+    "soft_reliability_penalty": 0.35,
+    "arm_share_soft_guard": True,
+    "arm_share_min_steps": 40,
+    "arm_share_zero_shot_cap": 0.45,
+    "arm_share_few_shot_cap": 0.20,
+    "arm_share_cot_cap": 0.55,
+    "arm_share_hint_cap": 0.50,
+    "arm_share_penalty": 0.45,
+    "targeted_hard_overrides": False,
+}
+CALIBRATION_FAIR_CALIB_V25_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V23_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v2.5",
+    "hint_string_soft_cap_guard": True,
+    "hint_string_soft_cap": 0.42,
+    "hint_list_soft_cap": 0.36,
+    "hint_soft_cap_penalty": 0.35,
+}
+CALIBRATION_FAIR_CALIB_V3_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V2_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v3",
+    "force_explore": 32,
+    "explore_order": "Balanced fair exploration v3",
+    "few_shot_min_memory": 0.55,
+    "soft_reliability_min_samples": 8,
+}
+CALIBRATION_FAIR_CALIB_V4_DEFAULTS = {
+    **CALIBRATION_FAIR_CALIB_V2_DEFAULTS,
+    "experiment_preset": "Calibration RL-APO Fair Calib v4",
+    "few_shot_min_memory": 0.58,
+    "soft_reliability_min_samples": 7,
+    "soft_reliability_margin": 0.20,
+    "soft_reliability_penalty": 0.25,
+    "few_shot_comeback_guard": True,
+    "few_shot_comeback_min_samples": 4,
+    "few_shot_comeback_reward": 0.65,
+}
 CALIBRATION_NO_WEAK_FEW_DEFAULTS = {
     **CALIBRATION_80_DEFAULTS,
     "experiment_preset": "Calibration RL-APO No Weak Few",
@@ -465,7 +603,34 @@ def summarize_results(df: pd.DataFrame, config: dict, run_name: str) -> dict:
         "max_arm_share_min_steps": config.get("max_arm_share_min_steps", 0),
         "few_shot_memory_guard": config.get("few_shot_memory_guard", False),
         "few_shot_min_memory": config.get("few_shot_min_memory", 0.0),
+        "few_shot_guard_min_samples": config.get("few_shot_guard_min_samples", 0),
+        "few_shot_probe_guard": config.get("few_shot_probe_guard", False),
+        "few_shot_probe_min_samples": config.get("few_shot_probe_min_samples", 0),
+        "few_shot_probe_until_step": config.get("few_shot_probe_until_step", 0),
+        "few_shot_probe_margin": config.get("few_shot_probe_margin", 0.0),
+        "few_shot_probe_cooldown": config.get("few_shot_probe_cooldown", 0),
+        "hint_string_soft_cap_guard": config.get("hint_string_soft_cap_guard", False),
+        "hint_string_soft_cap": config.get("hint_string_soft_cap", 0.0),
+        "hint_list_soft_cap": config.get("hint_list_soft_cap", 0.0),
+        "hint_soft_cap_penalty": config.get("hint_soft_cap_penalty", 0.0),
         "targeted_hard_overrides": config.get("targeted_hard_overrides", False),
+        "cot_anchor_guard": config.get("cot_anchor_guard", False),
+        "cot_anchor_margin": config.get("cot_anchor_margin", 0.0),
+        "cot_anchor_memory_threshold": config.get("cot_anchor_memory_threshold", 0.0),
+        "soft_reliability_guard": config.get("soft_reliability_guard", False),
+        "soft_reliability_min_samples": config.get("soft_reliability_min_samples", 0),
+        "soft_reliability_margin": config.get("soft_reliability_margin", 0.0),
+        "soft_reliability_penalty": config.get("soft_reliability_penalty", 0.0),
+        "few_shot_comeback_guard": config.get("few_shot_comeback_guard", False),
+        "few_shot_comeback_min_samples": config.get("few_shot_comeback_min_samples", 0),
+        "few_shot_comeback_reward": config.get("few_shot_comeback_reward", 0.0),
+        "arm_share_soft_guard": config.get("arm_share_soft_guard", False),
+        "arm_share_min_steps": config.get("arm_share_min_steps", 0),
+        "arm_share_zero_shot_cap": config.get("arm_share_zero_shot_cap", 0.0),
+        "arm_share_few_shot_cap": config.get("arm_share_few_shot_cap", 0.0),
+        "arm_share_cot_cap": config.get("arm_share_cot_cap", 0.0),
+        "arm_share_hint_cap": config.get("arm_share_hint_cap", 0.0),
+        "arm_share_penalty": config.get("arm_share_penalty", 0.0),
         "category_prior": config.get("category_prior", False),
         "category_prior_weight": config.get("category_prior_weight", 0.0),
         "category_arm_guard": config.get("category_arm_guard", False),
@@ -768,7 +933,79 @@ Also check the docstring examples, exact return type, empty inputs, duplicates, 
 {prompt}""",
 }
 
+FAIR_130_COMPILE_SAFE_PROMPTS = {
+    "zero_shot": """You are a precise Python programmer. Write one correct deterministic Python solution for the target function.
+
+Return only executable Python code. Do not include markdown fences, prose, comments, examples, tests, print statements, or timing code. A full function definition is acceptable; if you output only the body, keep it valid inside the shown signature.
+
+Before finalizing, silently check:
+1. Match the docstring examples exactly.
+2. Preserve the required return type.
+3. Handle empty inputs, single-item inputs, duplicates, negative numbers, whitespace, and boundary values when relevant.
+4. Prefer straightforward Python control flow and standard-library operations.
+5. Avoid mutating inputs unless the task explicitly requires mutation.
+
+Problem-specific guidance: {hint}
+
+{prompt}""",
+    "few_shot": """You are a precise Python programmer. Learn the implementation style from these generic examples, then solve the target function.
+
+Output only executable Python code. Do not output markdown, prose, comments, tests, or print statements.
+
+Example 1:
+def remove_vowels(text: str) -> str:
+    \"\"\"Return text with all vowels removed.\"\"\"
+Solution:
+    vowels = set('aeiouAEIOU')
+    return ''.join(ch for ch in text if ch not in vowels)
+
+Example 2:
+def running_balance_drops_below_zero(operations):
+    \"\"\"Return True if a cumulative balance ever becomes negative.\"\"\"
+Solution:
+    balance = 0
+    for value in operations:
+        balance += value
+        if balance < 0:
+            return True
+    return False
+
+Example 3:
+def split_balanced_groups(paren_string: str):
+    \"\"\"Split balanced parenthesis groups while ignoring spaces.\"\"\"
+Solution:
+    groups = []
+    current = ''
+    depth = 0
+    for ch in paren_string.replace(' ', ''):
+        current += ch
+        depth += 1 if ch == '(' else -1
+        if depth == 0:
+            groups.append(current)
+            current = ''
+    return groups
+
+Now solve the target function. Problem-specific guidance: {hint}
+
+{prompt}""",
+    "cot": """Think silently about the algorithm, edge cases, and exact return type. Then output only the final executable Python code.
+
+Do not reveal reasoning. Do not include markdown, prose, comments, tests, print statements, or extra examples. A full function definition is acceptable if that is the safest executable form.
+
+Problem-specific guidance: {hint}
+
+{prompt}""",
+    "hint": """Use the following general problem-specific hint, then implement the target function with direct Python code.
+
+{hint}
+
+Output only executable Python code. Do not include markdown, prose, comments, tests, or print statements. Check examples, exact return type, empty inputs, duplicates, whitespace, negative values, and boundary indexes when relevant.
+
+{prompt}""",
+}
+
 PROMPT_BANKS = {
+    "Fair 130 compile-safe prompts": FAIR_130_COMPILE_SAFE_PROMPTS,
     "Problem-type aware prompts": PROBLEM_TYPE_AWARE_PROMPTS,
     "Notebook 68 prompts": DEFAULT_PROMPTS,
     "Edge-case optimized prompts": EDGE_CASE_PROMPTS,
@@ -849,9 +1086,13 @@ def extract_code(generated: str) -> str:
 def extract_code_notebook(generated: str) -> str:
     generated = generated.strip()
     if "```python" in generated:
-        return generated.split("```python", 1)[1].split("```", 1)[0].strip()
-    if "```" in generated:
-        return generated.split("```", 1)[1].split("```", 1)[0].strip()
+        generated = generated.split("```python", 1)[1].split("```", 1)[0].strip()
+    elif "```" in generated:
+        generated = generated.split("```", 1)[1].split("```", 1)[0].strip()
+    stop_markers = ["\nProblem:", "\nExample", "\nTests:", "\nassert ", "\n# Test", "\nprint("]
+    for marker in stop_markers:
+        if marker in generated:
+            generated = generated.split(marker, 1)[0].strip()
     return generated
 
 
@@ -1062,11 +1303,72 @@ def fair_calib_prior_scores(category: str, num_arms: int = 4) -> list[float]:
     return priors[:num_arms]
 
 
+def fair_cot_prior_scores(category: str, num_arms: int = 4) -> list[float]:
+    priors = [0.0] * num_arms
+    if category in {"hashing", "expression"}:
+        priors[3] = 0.12
+        priors[0] = 0.06
+        priors[2] = 0.04
+    elif category in {"grid", "interval", "math", "ordering", "recursive", "parsing"}:
+        priors[2] = 0.18
+        priors[0] = 0.06
+    elif category in {"string", "list"}:
+        priors[2] = 0.12
+        priors[0] = 0.06
+        priors[3] = 0.04
+    else:
+        priors[2] = 0.10
+        priors[0] = 0.04
+    return priors[:num_arms]
+
+
+def fair_130_prior_scores(category: str, num_arms: int = 4) -> list[float]:
+    priors = [0.0] * num_arms
+    if category == "list":
+        priors[2] = 0.11
+        priors[3] = 0.07
+        priors[0] = 0.04
+    elif category == "string":
+        priors[0] = 0.10
+        priors[2] = 0.06
+        priors[3] = 0.03
+    elif category == "math":
+        priors[0] = 0.10
+        priors[2] = 0.08
+        priors[3] = 0.03
+    elif category == "parsing":
+        priors[0] = 0.09
+        priors[3] = 0.08
+        priors[2] = 0.04
+    elif category in {"grid", "interval", "ordering"}:
+        priors[2] = 0.10
+        priors[0] = 0.05
+        priors[3] = 0.04
+    elif category == "recursive":
+        priors[1] = 0.08
+        priors[3] = 0.06
+        priors[2] = 0.04
+    elif category in {"hashing", "expression"}:
+        priors[0] = 0.08
+        priors[3] = 0.05
+    else:
+        priors[0] = 0.05
+        priors[2] = 0.05
+    return priors[:num_arms]
+
+
 def category_prior_scores(problem: dict, num_arms: int = 4, experiment_preset: str = "") -> list[float]:
     category = problem_category(problem)
     text = problem["prompt"].lower()
     priors = [0.0] * num_arms
-    if experiment_preset == "Calibration RL-APO Fair Calib":
+    if experiment_preset in {"Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5"}:
+        return fair_130_prior_scores(category, num_arms)
+    if experiment_preset == "Calibration RL-APO Fair CoT-Prior":
+        return fair_cot_prior_scores(category, num_arms)
+    if experiment_preset in {
+        "Calibration RL-APO Fair Calib",
+        "Calibration RL-APO Fair Calib v2",
+    }:
         return fair_calib_prior_scores(category, num_arms)
     if experiment_preset in {"Calibration RL-APO Targeted v2", "Calibration RL-APO CoT Anchor v3"}:
         return targeted_v2_prior_scores(problem, category, num_arms)
@@ -1215,6 +1517,8 @@ def prompt_imports(prompt: str) -> str:
 
 def inferred_standard_imports(code: str) -> str:
     imports = []
+    if "re." in code and "import re" not in code:
+        imports.append("import re")
     if "hashlib." in code and "import hashlib" not in code:
         imports.append("import hashlib")
     if "math." in code and "import math" not in code:
@@ -1295,12 +1599,12 @@ def evaluate_compatible_completion(problem: dict, generated: str, timeout: int, 
     primary_method, primary_completion = candidates[0]
     primary_passed, primary_compile_ok, primary_reward, primary_error = evaluate_sample(problem, primary_completion, timeout)
     syntax_like_error = isinstance(primary_error, str) and "SyntaxError" in primary_error
-    if primary_passed or (primary_compile_ok and not syntax_like_error) or not allow_compile_fallback:
+    if primary_passed or not allow_compile_fallback:
         return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
 
     for method, completion in candidates[1:]:
         passed, compile_ok, reward, error = evaluate_sample(problem, completion, timeout)
-        if compile_ok:
+        if passed or (compile_ok and not primary_compile_ok):
             return completion, passed, compile_ok, reward, error, method
 
     return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
@@ -1321,11 +1625,11 @@ def evaluate_standard_completion(problem: dict, generated: str, timeout: int, al
     primary_method, primary_completion = unique[0]
     primary_passed, primary_compile_ok, primary_reward, primary_error = evaluate_sample(problem, primary_completion, timeout)
     syntax_like_error = isinstance(primary_error, str) and ("SyntaxError" in primary_error or "IndentationError" in primary_error)
-    if primary_passed or (primary_compile_ok and not syntax_like_error) or not allow_compile_fallback:
+    if primary_passed or not allow_compile_fallback:
         return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
     for method, completion in unique[1:]:
         passed, compile_ok, reward, error = evaluate_sample(problem, completion, timeout)
-        if compile_ok:
+        if passed or (compile_ok and not primary_compile_ok):
             return completion, passed, compile_ok, reward, error, method
     return primary_completion, primary_passed, primary_compile_ok, primary_reward, primary_error, primary_method
 
@@ -1378,6 +1682,8 @@ class OnlineLinUCB:
         self.theta = [np.zeros((dim_context, 1)) for _ in range(num_arms)]
         self.arm_counts = [0] * num_arms
         self.arm_rewards = [[] for _ in range(num_arms)]
+        self.last_few_shot_probe = False
+        self.last_few_shot_probe_step = -10**9
 
     def score_arms(self, context) -> list[float]:
         context = context.reshape(-1, 1)
@@ -1426,9 +1732,30 @@ class OnlineLinUCB:
         max_arm_share_min_steps: int = 20,
         few_shot_memory_guard: bool = False,
         few_shot_min_memory: float = 0.60,
+        few_shot_guard_min_samples: int = 0,
         override_arm: int | None = None,
+        cot_anchor_guard: bool = False,
+        cot_anchor_margin: float = 0.08,
+        cot_anchor_memory_threshold: float = 0.75,
+        soft_reliability_guard: bool = False,
+        soft_reliability_min_samples: int = 6,
+        soft_reliability_margin: float = 0.18,
+        soft_reliability_penalty: float = 0.35,
+        few_shot_comeback_guard: bool = False,
+        few_shot_comeback_min_samples: int = 4,
+        few_shot_comeback_reward: float = 0.65,
+        arm_share_soft_guard: bool = False,
+        arm_share_caps: list[float] | None = None,
+        arm_share_min_steps: int = 40,
+        arm_share_penalty: float = 0.45,
+        few_shot_probe_guard: bool = False,
+        few_shot_probe_min_samples: int = 8,
+        few_shot_probe_until_step: int = 80,
+        few_shot_probe_margin: float = 0.12,
+        few_shot_probe_cooldown: int = 4,
     ):
         self.t += 1
+        self.last_few_shot_probe = False
         linucb_scores = self.score_arms(context)
         if memory_scores is None:
             memory_scores = [0.0] * self.num_arms
@@ -1454,10 +1781,34 @@ class OnlineLinUCB:
                         share = self.arm_counts[idx] / total_selected
                         if share > max_arm_share:
                             candidate_scores[idx] -= 0.60 + (share - max_arm_share) * 2.0
+            if arm_share_soft_guard:
+                total_selected = max(sum(self.arm_counts), 1)
+                if total_selected >= arm_share_min_steps:
+                    caps = arm_share_caps or [1.0] * self.num_arms
+                    for idx in range(min(self.num_arms, len(caps))):
+                        share = self.arm_counts[idx] / total_selected
+                        if share > caps[idx]:
+                            candidate_scores[idx] -= arm_share_penalty + (share - caps[idx]) * 2.0
             if few_shot_memory_guard and self.t > self.force_explore and self.num_arms > 1:
                 few_shot_arm = 1
-                if memory_scores[few_shot_arm] < few_shot_min_memory:
+                few_shot_rewards = self.arm_rewards[few_shot_arm]
+                few_shot_can_comeback = (
+                    few_shot_comeback_guard
+                    and len(few_shot_rewards) >= few_shot_comeback_min_samples
+                    and float(np.mean(few_shot_rewards)) >= few_shot_comeback_reward
+                )
+                has_enough_few_shot_evidence = len(few_shot_rewards) >= few_shot_guard_min_samples
+                if has_enough_few_shot_evidence and memory_scores[few_shot_arm] < few_shot_min_memory and not few_shot_can_comeback:
                     candidate_scores[few_shot_arm] -= 0.80
+            if soft_reliability_guard:
+                averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
+                eligible = [idx for idx, rewards in enumerate(self.arm_rewards) if len(rewards) >= soft_reliability_min_samples]
+                if eligible:
+                    best_average = max(averages[idx] for idx in eligible)
+                    for idx in eligible:
+                        lag = best_average - averages[idx]
+                        if lag > soft_reliability_margin:
+                            candidate_scores[idx] -= soft_reliability_penalty + lag
             if weak_arm_guard:
                 averages = [float(np.mean(rewards)) if rewards else 0.0 for rewards in self.arm_rewards]
                 eligible = [idx for idx, rewards in enumerate(self.arm_rewards) if len(rewards) >= weak_arm_min_samples]
@@ -1475,6 +1826,28 @@ class OnlineLinUCB:
                 ]
                 if underused:
                     arm = max(underused, key=lambda idx: candidate_scores[idx])
+                    if cot_anchor_guard and self.num_arms > 2 and arm != 2 and candidate_scores[2] > -1e8:
+                        cot_arm = 2
+                        has_strong_memory = (
+                            memory_scores[arm] >= cot_anchor_memory_threshold
+                            and memory_scores[arm] >= memory_scores[cot_arm] + 0.10
+                        )
+                        has_category_support = guard_scores[arm] >= guard_scores[cot_arm] + 0.20
+                        clears_margin = candidate_scores[arm] >= candidate_scores[cot_arm] + cot_anchor_margin
+                        if not (clears_margin or has_strong_memory or has_category_support):
+                            arm = cot_arm
+                    if (
+                        few_shot_probe_guard
+                        and self.num_arms > 1
+                        and self.arm_counts[1] < few_shot_probe_min_samples
+                        and self.t <= few_shot_probe_until_step
+                        and self.t - self.last_few_shot_probe_step >= few_shot_probe_cooldown
+                        and candidate_scores[1] > -1e8
+                        and candidate_scores[1] >= candidate_scores[arm] - few_shot_probe_margin
+                    ):
+                        arm = 1
+                        self.last_few_shot_probe = True
+                        self.last_few_shot_probe_step = self.t
                     self.arm_counts[arm] += 1
                     return arm, linucb_scores, memory_scores, combined_scores, forced
             arm = int(np.argmax(candidate_scores))
@@ -1485,6 +1858,28 @@ class OnlineLinUCB:
                     best_arm = max(eligible, key=lambda idx: averages[idx])
                     if averages[best_arm] >= averages[arm] + best_arm_margin:
                         arm = best_arm
+            if cot_anchor_guard and self.num_arms > 2 and arm != 2 and candidate_scores[2] > -1e8:
+                cot_arm = 2
+                has_strong_memory = (
+                    memory_scores[arm] >= cot_anchor_memory_threshold
+                    and memory_scores[arm] >= memory_scores[cot_arm] + 0.10
+                )
+                has_category_support = guard_scores[arm] >= guard_scores[cot_arm] + 0.20
+                clears_margin = candidate_scores[arm] >= candidate_scores[cot_arm] + cot_anchor_margin
+                if not (clears_margin or has_strong_memory or has_category_support):
+                    arm = cot_arm
+            if (
+                few_shot_probe_guard
+                and self.num_arms > 1
+                and self.arm_counts[1] < few_shot_probe_min_samples
+                and self.t <= few_shot_probe_until_step
+                and self.t - self.last_few_shot_probe_step >= few_shot_probe_cooldown
+                and candidate_scores[1] > -1e8
+                and candidate_scores[1] >= candidate_scores[arm] - few_shot_probe_margin
+            ):
+                arm = 1
+                self.last_few_shot_probe = True
+                self.last_few_shot_probe_step = self.t
         self.arm_counts[arm] += 1
         return arm, linucb_scores, memory_scores, combined_scores, forced
 
@@ -1682,6 +2077,11 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
     explore_orders = {
         "Notebook order": [0, 1, 2, 3],
         "Strong-first (CoT, Hint, Zero, Few)": [2, 3, 0, 1],
+        "CoT-heavy fair exploration": [2, 0, 2, 3, 2, 1, 2, 0],
+        "Balanced fair exploration": [2, 3, 0, 1, 0, 3, 2],
+        "Fair 130 balanced exploration": [2, 0, 3, 0, 2, 3, 1, 2],
+        "Balanced fair exploration v4": [2, 3, 0, 1, 0, 3, 2, 3],
+        "Balanced fair exploration v3": [2, 3, 0, 1, 0, 3, 2, 1],
         "CoT/Hint/Zero during exploration": [2, 3, 0],
         "CoT/Hint only during exploration": [2, 3],
     }
@@ -1746,6 +2146,12 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         threshold=config.get("recent_cooldown_threshold", 0.55),
                     )
                     hard_guards = [hard_guards[idx] + recent_scores[idx] for idx in range(len(hard_guards))]
+                if config.get("hint_string_soft_cap_guard") and current_category in {"string", "list"}:
+                    total_selected = max(sum(bandit.arm_counts), 1)
+                    hint_share = bandit.arm_counts[3] / total_selected
+                    cap = config.get("hint_string_soft_cap", 0.42) if current_category == "string" else config.get("hint_list_soft_cap", 0.36)
+                    if total_selected >= config.get("arm_share_min_steps", 40) and hint_share > cap:
+                        hard_guards[3] -= config.get("hint_soft_cap_penalty", 0.35) + (hint_share - cap)
                 if config.get("similarity_memory"):
                     memory_scores, nearest_examples, best_similarity = compute_similarity_memory_scores(
                         features,
@@ -1775,7 +2181,32 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         max_arm_share_min_steps=config.get("max_arm_share_min_steps", 20),
                         few_shot_memory_guard=config.get("few_shot_memory_guard", False),
                         few_shot_min_memory=config.get("few_shot_min_memory", 0.60),
+                        few_shot_guard_min_samples=config.get("few_shot_guard_min_samples", 0),
                         override_arm=override_arm,
+                        cot_anchor_guard=config.get("cot_anchor_guard", False),
+                        cot_anchor_margin=config.get("cot_anchor_margin", 0.08),
+                        cot_anchor_memory_threshold=config.get("cot_anchor_memory_threshold", 0.75),
+                        soft_reliability_guard=config.get("soft_reliability_guard", False),
+                        soft_reliability_min_samples=config.get("soft_reliability_min_samples", 6),
+                        soft_reliability_margin=config.get("soft_reliability_margin", 0.18),
+                        soft_reliability_penalty=config.get("soft_reliability_penalty", 0.35),
+                        few_shot_comeback_guard=config.get("few_shot_comeback_guard", False),
+                        few_shot_comeback_min_samples=config.get("few_shot_comeback_min_samples", 4),
+                        few_shot_comeback_reward=config.get("few_shot_comeback_reward", 0.65),
+                        arm_share_soft_guard=config.get("arm_share_soft_guard", False),
+                        arm_share_caps=[
+                            config.get("arm_share_zero_shot_cap", 1.0),
+                            config.get("arm_share_few_shot_cap", 1.0),
+                            config.get("arm_share_cot_cap", 1.0),
+                            config.get("arm_share_hint_cap", 1.0),
+                        ],
+                        arm_share_min_steps=config.get("arm_share_min_steps", 40),
+                        arm_share_penalty=config.get("arm_share_penalty", 0.45),
+                        few_shot_probe_guard=config.get("few_shot_probe_guard", False),
+                        few_shot_probe_min_samples=config.get("few_shot_probe_min_samples", 8),
+                        few_shot_probe_until_step=config.get("few_shot_probe_until_step", 80),
+                        few_shot_probe_margin=config.get("few_shot_probe_margin", 0.12),
+                        few_shot_probe_cooldown=config.get("few_shot_probe_cooldown", 4),
                     )
                 else:
                     arm, linucb_scores, memory_scores, combined_scores, forced_explore = bandit.choose_arm(
@@ -1797,7 +2228,32 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                         max_arm_share_min_steps=config.get("max_arm_share_min_steps", 20),
                         few_shot_memory_guard=config.get("few_shot_memory_guard", False),
                         few_shot_min_memory=config.get("few_shot_min_memory", 0.60),
+                        few_shot_guard_min_samples=config.get("few_shot_guard_min_samples", 0),
                         override_arm=override_arm,
+                        cot_anchor_guard=config.get("cot_anchor_guard", False),
+                        cot_anchor_margin=config.get("cot_anchor_margin", 0.08),
+                        cot_anchor_memory_threshold=config.get("cot_anchor_memory_threshold", 0.75),
+                        soft_reliability_guard=config.get("soft_reliability_guard", False),
+                        soft_reliability_min_samples=config.get("soft_reliability_min_samples", 6),
+                        soft_reliability_margin=config.get("soft_reliability_margin", 0.18),
+                        soft_reliability_penalty=config.get("soft_reliability_penalty", 0.35),
+                        few_shot_comeback_guard=config.get("few_shot_comeback_guard", False),
+                        few_shot_comeback_min_samples=config.get("few_shot_comeback_min_samples", 4),
+                        few_shot_comeback_reward=config.get("few_shot_comeback_reward", 0.65),
+                        arm_share_soft_guard=config.get("arm_share_soft_guard", False),
+                        arm_share_caps=[
+                            config.get("arm_share_zero_shot_cap", 1.0),
+                            config.get("arm_share_few_shot_cap", 1.0),
+                            config.get("arm_share_cot_cap", 1.0),
+                            config.get("arm_share_hint_cap", 1.0),
+                        ],
+                        arm_share_min_steps=config.get("arm_share_min_steps", 40),
+                        arm_share_penalty=config.get("arm_share_penalty", 0.45),
+                        few_shot_probe_guard=config.get("few_shot_probe_guard", False),
+                        few_shot_probe_min_samples=config.get("few_shot_probe_min_samples", 8),
+                        few_shot_probe_until_step=config.get("few_shot_probe_until_step", 80),
+                        few_shot_probe_margin=config.get("few_shot_probe_margin", 0.12),
+                        few_shot_probe_cooldown=config.get("few_shot_probe_cooldown", 4),
                     )
                     nearest_examples = []
                     best_similarity = 0.0
@@ -1917,6 +2373,7 @@ def run_experiment(config: dict, prompt_templates: dict, problems: dict):
                 "forced_explore": forced_explore,
                 "hard_override": override_arm is not None,
                 "override_strategy": STRATEGY_NAMES.get(override_arm, "") if override_arm is not None else "",
+                "few_shot_probe": bool(bandit and getattr(bandit, "last_few_shot_probe", False)),
                 "nearest_examples": ", ".join(nearest_examples),
                 "best_similarity": best_similarity,
                 "task_seconds": task_seconds,
@@ -2204,6 +2661,15 @@ with st.sidebar:
     with st.expander("Runtime", expanded=False):
         st.code(sys.executable, language="text")
     built_in_presets = [
+        {"name": "Calibration RL-APO Fair Calib v2.3", "config": CALIBRATION_FAIR_CALIB_V23_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v2.5", "config": CALIBRATION_FAIR_CALIB_V25_DEFAULTS},
+        {"name": "Fair 130 Candidate", "config": FAIR_130_CANDIDATE_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v2.2", "config": CALIBRATION_FAIR_CALIB_V22_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v2.1", "config": CALIBRATION_FAIR_CALIB_V21_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v4", "config": CALIBRATION_FAIR_CALIB_V4_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v3", "config": CALIBRATION_FAIR_CALIB_V3_DEFAULTS},
+        {"name": "Calibration RL-APO Fair Calib v2", "config": CALIBRATION_FAIR_CALIB_V2_DEFAULTS},
+        {"name": "Calibration RL-APO Fair CoT-Prior", "config": CALIBRATION_FAIR_COT_PRIOR_DEFAULTS},
         {"name": "Calibration RL-APO Fair Calib", "config": CALIBRATION_FAIR_CALIB_DEFAULTS},
         {"name": "Calibration RL-APO CoT Anchor v3", "config": CALIBRATION_COT_ANCHOR_V3_DEFAULTS},
         {"name": "Calibration RL-APO Targeted v2", "config": CALIBRATION_TARGETED_V2_DEFAULTS},
@@ -2223,7 +2689,7 @@ with st.sidebar:
         "Setting preset",
         preset_names,
         index=0,
-        help="Calibration RL-APO Fair Calib adalah preset utama thesis: online calibration tetap dihitung dalam 164 task, tanpa hard override atau exact HumanEval routing.",
+        help="Fair v2.3 starts from the 124-pass fair v2.2 setup, keeps hard overrides off, and uses compile-safe prompts plus light category priors.",
     )
     active_setting_preset = next(item["config"] for item in preset_options if item["name"] == selected_setting_preset)
     st.markdown("<span class='pill'>Step 1</span> <b>Choose experiment type</b>", unsafe_allow_html=True)
@@ -2231,8 +2697,8 @@ with st.sidebar:
     mode = st.radio("Mode", mode_options, horizontal=True, index=option_index(mode_options, preset_value(active_setting_preset, "mode", "Online Bandit")))
     experiment_preset = st.selectbox(
         "Experiment preset",
-        ["Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
-        index=option_index(["Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"], preset_value(active_setting_preset, "experiment_preset", "Calibration RL-APO Fair Calib")),
+        ["Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5", "Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.2", "Calibration RL-APO Fair Calib v2.1", "Calibration RL-APO Fair Calib v4", "Calibration RL-APO Fair Calib v3", "Calibration RL-APO Fair Calib v2", "Calibration RL-APO Fair CoT-Prior", "Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"],
+        index=option_index(["Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5", "Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.2", "Calibration RL-APO Fair Calib v2.1", "Calibration RL-APO Fair Calib v4", "Calibration RL-APO Fair Calib v3", "Calibration RL-APO Fair Calib v2", "Calibration RL-APO Fair CoT-Prior", "Calibration RL-APO Fair Calib", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Targeted v2", "Calibration RL-APO Targeted", "Calibration RL-APO No Weak Few", "Calibration RL-APO", "73.8+ Balanced RL-APO", "76% Hybrid RL-APO", "75% Precision RL-APO", "75% Push RL-APO", "Anti-collapse RL-APO", "Thesis full run", "Quick smoke test", "Strict notebook reproduction", "Custom"], preset_value(active_setting_preset, "experiment_preset", "Calibration RL-APO Fair Calib v2.3")),
         help="Preset hanya memberi panduan default setting. Kamu tetap bisa mengubah kontrol di bawahnya.",
     )
     st.markdown("<span class='pill'>Step 2</span> <b>Select prompt policy</b>", unsafe_allow_html=True)
@@ -2255,7 +2721,7 @@ with st.sidebar:
         model_name = st.text_input("Model", "deepseek-ai/deepseek-coder-6.7b-instruct")
         load_in_4bit = st.checkbox("Load 4-bit", value=bool(preset_value(active_setting_preset, "load_in_4bit", True)))
         use_chat_template = st.checkbox("Use tokenizer chat template", value=bool(preset_value(active_setting_preset, "use_chat_template", True)))
-    default_tasks = min(164, len(problems)) if experiment_preset in {"Thesis full run", "Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO", "76% Hybrid RL-APO", "73.8+ Balanced RL-APO", "Calibration RL-APO", "Calibration RL-APO No Weak Few", "Calibration RL-APO Targeted", "Calibration RL-APO Targeted v2", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Fair Calib"} else min(10, len(problems))
+    default_tasks = min(164, len(problems)) if experiment_preset in {"Thesis full run", "Anti-collapse RL-APO", "75% Push RL-APO", "75% Precision RL-APO", "76% Hybrid RL-APO", "73.8+ Balanced RL-APO", "Calibration RL-APO", "Calibration RL-APO No Weak Few", "Calibration RL-APO Targeted", "Calibration RL-APO Targeted v2", "Calibration RL-APO CoT Anchor v3", "Calibration RL-APO Fair Calib", "Calibration RL-APO Fair CoT-Prior", "Calibration RL-APO Fair Calib v2", "Calibration RL-APO Fair Calib v3", "Calibration RL-APO Fair Calib v4", "Calibration RL-APO Fair Calib v2.1", "Calibration RL-APO Fair Calib v2.2", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5", "Fair 130 Candidate"} else min(10, len(problems))
     default_tasks = min(int(preset_value(active_setting_preset, "num_tasks", default_tasks)), min(164, len(problems)))
     num_tasks = st.slider("Jumlah soal", 1, min(164, len(problems)), default_tasks)
     repeats = st.slider("Repeat per soal", 1, 5, int(preset_value(active_setting_preset, "repeats", 1)))
@@ -2327,10 +2793,11 @@ with st.sidebar:
         memory_top_k = st.slider("Memory top-k similar tasks", 1, 20, int(preset_value(active_setting_preset, "memory_top_k", 8)), disabled=mode != "Online Bandit" or not similarity_memory)
         memory_lambda = st.slider("Memory weight lambda", 0.0, 1.5, float(preset_value(active_setting_preset, "memory_lambda", 0.5)), 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
         memory_threshold = st.slider("Similarity threshold", 0.0, 1.0, float(preset_value(active_setting_preset, "memory_threshold", 0.15)), 0.05, disabled=mode != "Online Bandit" or not similarity_memory)
+        explore_order_options = ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "Fair 130 balanced exploration", "Balanced fair exploration", "Balanced fair exploration v3", "Balanced fair exploration v4", "CoT-heavy fair exploration", "CoT/Hint/Zero during exploration", "CoT/Hint only during exploration"]
         explore_order = st.selectbox(
             "Forced exploration order",
-            ["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint/Zero during exploration", "CoT/Hint only during exploration"],
-            index=option_index(["Notebook order", "Strong-first (CoT, Hint, Zero, Few)", "CoT/Hint/Zero during exploration", "CoT/Hint only during exploration"], preset_value(active_setting_preset, "explore_order", "Strong-first (CoT, Hint, Zero, Few)"), 1 if experiment_preset != "Strict notebook reproduction" else 0),
+            explore_order_options,
+            index=option_index(explore_order_options, preset_value(active_setting_preset, "explore_order", "Strong-first (CoT, Hint, Zero, Few)"), 1 if experiment_preset != "Strict notebook reproduction" else 0),
             disabled=mode != "Online Bandit",
             help="Notebook order is strict. Strong-first reduces early damage from weak arms observed in recent runs.",
         )
@@ -2373,12 +2840,70 @@ with st.sidebar:
             help="Penalizes few-shot unless similar previous tasks provide enough memory evidence. Useful when few-shot evaluation pass rate drops.",
         )
         few_shot_min_memory = st.slider("Few-shot min memory", 0.0, 1.0, float(preset_value(active_setting_preset, "few_shot_min_memory", 0.60)), 0.05, disabled=mode != "Online Bandit" or not few_shot_memory_guard)
+        few_shot_guard_min_samples = st.slider("Few-shot guard min samples", 0, 20, int(preset_value(active_setting_preset, "few_shot_guard_min_samples", 0)), disabled=mode != "Online Bandit" or not few_shot_memory_guard)
+        few_shot_probe_guard = st.checkbox(
+            "Few-shot probe guard",
+            value=bool(preset_value(active_setting_preset, "few_shot_probe_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Gives few-shot a limited online probe budget while it is under-sampled and still score-competitive.",
+        )
+        probe_cols = st.columns(4)
+        with probe_cols[0]:
+            few_shot_probe_min_samples = st.slider("Few probe samples", 0, 20, int(preset_value(active_setting_preset, "few_shot_probe_min_samples", 8)), disabled=mode != "Online Bandit" or not few_shot_probe_guard)
+        with probe_cols[1]:
+            few_shot_probe_until_step = st.slider("Few probe until step", 0, 164, int(preset_value(active_setting_preset, "few_shot_probe_until_step", 80)), 4, disabled=mode != "Online Bandit" or not few_shot_probe_guard)
+        with probe_cols[2]:
+            few_shot_probe_margin = st.slider("Few probe margin", 0.00, 0.50, float(preset_value(active_setting_preset, "few_shot_probe_margin", 0.12)), 0.01, disabled=mode != "Online Bandit" or not few_shot_probe_guard)
+        with probe_cols[3]:
+            few_shot_probe_cooldown = st.slider("Few probe cooldown", 0, 20, int(preset_value(active_setting_preset, "few_shot_probe_cooldown", 4)), disabled=mode != "Online Bandit" or not few_shot_probe_guard)
         targeted_hard_overrides = st.checkbox(
             "Targeted hard overrides",
-            value=bool(preset_value(active_setting_preset, "targeted_hard_overrides", False)),
-            disabled=mode != "Online Bandit",
-            help="For high-confidence task patterns from the latest diff, force the selected arm even during forced exploration.",
+            value=False if experiment_preset in {"Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5"} else bool(preset_value(active_setting_preset, "targeted_hard_overrides", False)),
+            disabled=mode != "Online Bandit" or experiment_preset in {"Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5"},
+            help="Disabled for fair v2.3/v2.5/Fair 130 Candidate. Other presets may force arms for high-confidence benchmark patterns.",
         )
+        cot_anchor_guard = st.checkbox(
+            "CoT anchor guard",
+            value=bool(preset_value(active_setting_preset, "cot_anchor_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Keeps CoT as the safe default unless a non-CoT arm beats it by enough score or has strong online evidence.",
+        )
+        cot_anchor_margin = st.slider("CoT anchor margin", 0.00, 0.30, float(preset_value(active_setting_preset, "cot_anchor_margin", 0.08)), 0.01, disabled=mode != "Online Bandit" or not cot_anchor_guard)
+        cot_anchor_memory_threshold = st.slider("CoT anchor memory threshold", 0.0, 1.0, float(preset_value(active_setting_preset, "cot_anchor_memory_threshold", 0.75)), 0.05, disabled=mode != "Online Bandit" or not cot_anchor_guard)
+        soft_reliability_guard = st.checkbox(
+            "Soft reliability guard",
+            value=bool(preset_value(active_setting_preset, "soft_reliability_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Softly penalizes arms whose online reward lags behind the best sampled arm, without hard-blocking comeback.",
+        )
+        soft_reliability_min_samples = st.slider("Reliability min samples", 2, 20, int(preset_value(active_setting_preset, "soft_reliability_min_samples", 6)), disabled=mode != "Online Bandit" or not soft_reliability_guard)
+        soft_reliability_margin = st.slider("Reliability margin", 0.05, 0.50, float(preset_value(active_setting_preset, "soft_reliability_margin", 0.18)), 0.01, disabled=mode != "Online Bandit" or not soft_reliability_guard)
+        soft_reliability_penalty = st.slider("Reliability penalty", 0.05, 1.00, float(preset_value(active_setting_preset, "soft_reliability_penalty", 0.35)), 0.05, disabled=mode != "Online Bandit" or not soft_reliability_guard)
+        few_shot_comeback_guard = st.checkbox(
+            "Few-shot comeback guard",
+            value=bool(preset_value(active_setting_preset, "few_shot_comeback_guard", False)),
+            disabled=mode != "Online Bandit" or not few_shot_memory_guard,
+            help="Lets few-shot bypass the memory penalty when its own online reward is already strong enough.",
+        )
+        few_shot_comeback_min_samples = st.slider("Few-shot comeback samples", 2, 12, int(preset_value(active_setting_preset, "few_shot_comeback_min_samples", 4)), disabled=mode != "Online Bandit" or not few_shot_memory_guard or not few_shot_comeback_guard)
+        few_shot_comeback_reward = st.slider("Few-shot comeback reward", 0.0, 1.0, float(preset_value(active_setting_preset, "few_shot_comeback_reward", 0.65)), 0.05, disabled=mode != "Online Bandit" or not few_shot_memory_guard or not few_shot_comeback_guard)
+        arm_share_soft_guard = st.checkbox(
+            "Per-arm soft share guard",
+            value=bool(preset_value(active_setting_preset, "arm_share_soft_guard", False)),
+            disabled=mode != "Online Bandit",
+            help="Softly penalizes each arm after it exceeds its own selection-share cap.",
+        )
+        arm_share_min_steps = st.slider("Share guard min steps", 8, 100, int(preset_value(active_setting_preset, "arm_share_min_steps", 40)), 4, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
+        share_cols = st.columns(4)
+        with share_cols[0]:
+            arm_share_zero_shot_cap = st.slider("Zero cap", 0.10, 0.90, float(preset_value(active_setting_preset, "arm_share_zero_shot_cap", 0.45)), 0.05, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
+        with share_cols[1]:
+            arm_share_few_shot_cap = st.slider("Few cap", 0.05, 0.70, float(preset_value(active_setting_preset, "arm_share_few_shot_cap", 0.20)), 0.05, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
+        with share_cols[2]:
+            arm_share_cot_cap = st.slider("CoT cap", 0.10, 0.90, float(preset_value(active_setting_preset, "arm_share_cot_cap", 0.55)), 0.05, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
+        with share_cols[3]:
+            arm_share_hint_cap = st.slider("Hint cap", 0.10, 0.90, float(preset_value(active_setting_preset, "arm_share_hint_cap", 0.50)), 0.05, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
+        arm_share_penalty = st.slider("Share guard penalty", 0.05, 1.00, float(preset_value(active_setting_preset, "arm_share_penalty", 0.45)), 0.05, disabled=mode != "Online Bandit" or not arm_share_soft_guard)
         category_prior = st.checkbox(
             "Category-aware prompt prior",
             value=bool(preset_value(active_setting_preset, "category_prior", experiment_preset != "Strict notebook reproduction")),
@@ -2520,6 +3045,8 @@ with tab_run:
             st.warning("Notebook 68 compatible mode sedang ON, jadi Online Bandit akan mengabaikan selected prompt bank dan memakai prompt notebook persis.")
         if compatible_fallback or warm_start or similarity_memory or explore_order != "Notebook order" or weak_arm_guard:
             st.info("Compatible+/Similarity-Aware aktif: run ini adalah varian improvement terpisah, bukan strict reproduction dari notebook 68%.")
+        if experiment_preset in {"Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5"}:
+            st.success("Fair v2.3/v2.5 keeps targeted hard overrides disabled and preserves the proven Problem-type aware prompt policy.")
     config = {
         "mode": mode,
         "experiment_preset": experiment_preset,
@@ -2560,7 +3087,34 @@ with tab_run:
         "max_arm_share_min_steps": max_arm_share_min_steps if mode == "Online Bandit" and max_arm_share_guard else 0,
         "few_shot_memory_guard": few_shot_memory_guard if mode == "Online Bandit" else False,
         "few_shot_min_memory": few_shot_min_memory if mode == "Online Bandit" and few_shot_memory_guard else 0.0,
-        "targeted_hard_overrides": targeted_hard_overrides if mode == "Online Bandit" else False,
+        "few_shot_guard_min_samples": few_shot_guard_min_samples if mode == "Online Bandit" and few_shot_memory_guard else 0,
+        "few_shot_probe_guard": few_shot_probe_guard if mode == "Online Bandit" else False,
+        "few_shot_probe_min_samples": few_shot_probe_min_samples if mode == "Online Bandit" and few_shot_probe_guard else 0,
+        "few_shot_probe_until_step": few_shot_probe_until_step if mode == "Online Bandit" and few_shot_probe_guard else 0,
+        "few_shot_probe_margin": few_shot_probe_margin if mode == "Online Bandit" and few_shot_probe_guard else 0.0,
+        "few_shot_probe_cooldown": few_shot_probe_cooldown if mode == "Online Bandit" and few_shot_probe_guard else 0,
+        "hint_string_soft_cap_guard": bool(preset_value(active_setting_preset, "hint_string_soft_cap_guard", False)) if mode == "Online Bandit" else False,
+        "hint_string_soft_cap": float(preset_value(active_setting_preset, "hint_string_soft_cap", 0.0)) if mode == "Online Bandit" else 0.0,
+        "hint_list_soft_cap": float(preset_value(active_setting_preset, "hint_list_soft_cap", 0.0)) if mode == "Online Bandit" else 0.0,
+        "hint_soft_cap_penalty": float(preset_value(active_setting_preset, "hint_soft_cap_penalty", 0.0)) if mode == "Online Bandit" else 0.0,
+        "targeted_hard_overrides": False if experiment_preset in {"Fair 130 Candidate", "Calibration RL-APO Fair Calib v2.3", "Calibration RL-APO Fair Calib v2.5"} else (targeted_hard_overrides if mode == "Online Bandit" else False),
+        "cot_anchor_guard": cot_anchor_guard if mode == "Online Bandit" else False,
+        "cot_anchor_margin": cot_anchor_margin if mode == "Online Bandit" and cot_anchor_guard else 0.0,
+        "cot_anchor_memory_threshold": cot_anchor_memory_threshold if mode == "Online Bandit" and cot_anchor_guard else 0.0,
+        "soft_reliability_guard": soft_reliability_guard if mode == "Online Bandit" else False,
+        "soft_reliability_min_samples": soft_reliability_min_samples if mode == "Online Bandit" and soft_reliability_guard else 0,
+        "soft_reliability_margin": soft_reliability_margin if mode == "Online Bandit" and soft_reliability_guard else 0.0,
+        "soft_reliability_penalty": soft_reliability_penalty if mode == "Online Bandit" and soft_reliability_guard else 0.0,
+        "few_shot_comeback_guard": few_shot_comeback_guard if mode == "Online Bandit" and few_shot_memory_guard else False,
+        "few_shot_comeback_min_samples": few_shot_comeback_min_samples if mode == "Online Bandit" and few_shot_memory_guard and few_shot_comeback_guard else 0,
+        "few_shot_comeback_reward": few_shot_comeback_reward if mode == "Online Bandit" and few_shot_memory_guard and few_shot_comeback_guard else 0.0,
+        "arm_share_soft_guard": arm_share_soft_guard if mode == "Online Bandit" else False,
+        "arm_share_min_steps": arm_share_min_steps if mode == "Online Bandit" and arm_share_soft_guard else 0,
+        "arm_share_zero_shot_cap": arm_share_zero_shot_cap if mode == "Online Bandit" and arm_share_soft_guard else 0.0,
+        "arm_share_few_shot_cap": arm_share_few_shot_cap if mode == "Online Bandit" and arm_share_soft_guard else 0.0,
+        "arm_share_cot_cap": arm_share_cot_cap if mode == "Online Bandit" and arm_share_soft_guard else 0.0,
+        "arm_share_hint_cap": arm_share_hint_cap if mode == "Online Bandit" and arm_share_soft_guard else 0.0,
+        "arm_share_penalty": arm_share_penalty if mode == "Online Bandit" and arm_share_soft_guard else 0.0,
         "category_prior": category_prior if mode == "Online Bandit" else False,
         "category_prior_weight": category_prior_weight if mode == "Online Bandit" and category_prior else 0.0,
         "category_arm_guard": category_arm_guard if mode == "Online Bandit" else False,
@@ -2603,10 +3157,10 @@ with tab_run:
     with st.expander("Recommended run order", expanded=False):
         st.markdown(
             """
-            1. Jalankan preset `Calibration RL-APO Fair Calib` sebagai hasil utama thesis karena tidak memakai exact HumanEval routing.
-            2. Bandingkan dengan Fixed Strategy `cot` pada full 164 task; calibration tetap dihitung sebagai bagian dari online learning.
-            3. Gunakan `Calibration RL-APO CoT Anchor v3` hanya sebagai post-hoc diagnostic upper-bound, bukan hasil utama.
-            4. Cek distribusi arm, phase, dan hard_override di Latest Results.
+            1. Jalankan preset `Calibration RL-APO Fair Calib v2.3` sebagai kandidat utama fair 130-pass: no hard override, prompt compile-safe, dan tetap dekat dengan fair v2.2 yang sudah 124 pass.
+            2. Rerun `Calibration RL-APO Fair Calib v2.2` sebagai baseline fair lama untuk memastikan improvement bukan noise.
+            3. Bandingkan dengan Fixed Strategy `cot` pada full 164 task; calibration tetap dihitung sebagai bagian dari online learning.
+            4. Gunakan `Calibration RL-APO CoT Anchor v3` hanya sebagai post-hoc diagnostic upper-bound, bukan hasil utama.
             """
         )
     with st.expander("Save / manage setting presets", expanded=False):
@@ -2882,7 +3436,30 @@ with tab_compare:
             "max_arm_share_min_steps": 0,
             "few_shot_memory_guard": False,
             "few_shot_min_memory": 0.0,
+            "few_shot_guard_min_samples": 0,
+            "few_shot_probe_guard": False,
+            "few_shot_probe_min_samples": 0,
+            "few_shot_probe_until_step": 0,
+            "few_shot_probe_margin": 0.0,
+            "few_shot_probe_cooldown": 0,
             "targeted_hard_overrides": False,
+            "cot_anchor_guard": False,
+            "cot_anchor_margin": 0.0,
+            "cot_anchor_memory_threshold": 0.0,
+            "soft_reliability_guard": False,
+            "soft_reliability_min_samples": 0,
+            "soft_reliability_margin": 0.0,
+            "soft_reliability_penalty": 0.0,
+            "few_shot_comeback_guard": False,
+            "few_shot_comeback_min_samples": 0,
+            "few_shot_comeback_reward": 0.0,
+            "arm_share_soft_guard": False,
+            "arm_share_min_steps": 0,
+            "arm_share_zero_shot_cap": 0.0,
+            "arm_share_few_shot_cap": 0.0,
+            "arm_share_cot_cap": 0.0,
+            "arm_share_hint_cap": 0.0,
+            "arm_share_penalty": 0.0,
             "category_prior": False,
             "category_prior_weight": 0.0,
             "category_arm_guard": False,
@@ -3005,7 +3582,30 @@ with tab_compare:
             "max_arm_share_min_steps",
             "few_shot_memory_guard",
             "few_shot_min_memory",
+            "few_shot_guard_min_samples",
+            "few_shot_probe_guard",
+            "few_shot_probe_min_samples",
+            "few_shot_probe_until_step",
+            "few_shot_probe_margin",
+            "few_shot_probe_cooldown",
             "targeted_hard_overrides",
+            "cot_anchor_guard",
+            "cot_anchor_margin",
+            "cot_anchor_memory_threshold",
+            "soft_reliability_guard",
+            "soft_reliability_min_samples",
+            "soft_reliability_margin",
+            "soft_reliability_penalty",
+            "few_shot_comeback_guard",
+            "few_shot_comeback_min_samples",
+            "few_shot_comeback_reward",
+            "arm_share_soft_guard",
+            "arm_share_min_steps",
+            "arm_share_zero_shot_cap",
+            "arm_share_few_shot_cap",
+            "arm_share_cot_cap",
+            "arm_share_hint_cap",
+            "arm_share_penalty",
             "category_prior",
             "category_prior_weight",
             "category_arm_guard",
